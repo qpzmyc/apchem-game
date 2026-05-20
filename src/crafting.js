@@ -1,0 +1,437 @@
+// --- Craftable Items Registry ---
+export const craftableItems = [
+    {
+        id: "e_booster_1",
+        name: "Basic Energy Booster",
+        description: "Gain 50% more energy from nucluei",
+        locations: ["H"],
+        cost: { energy: 1000, electrons: 1, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if ((state.upgrades.energyBooster || 0) < 1) {
+                state.upgrades.energyBooster = 1;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_booster_2",
+        name: "Normal Energy Booster",
+        description: "Gain 2x energy from nucluei",
+        locations: ["B"],
+        cost: { energy: 3500, electrons: 2, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if ((state.upgrades.energyBooster || 0) < 2) {
+                state.upgrades.energyBooster = 2;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_booster_3",
+        name: "Super Energy Booster",
+        description: "Gain 3x  energy from nucluei",
+        locations: ["Sn"],
+        cost: { energy: 8000, electrons: 4, shards: { s: 2, p: 0, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if ((state.upgrades.energyBooster || 0) < 3) {
+                state.upgrades.energyBooster = 3;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_booster_4",
+        name: "Ultra Energy Booster",
+        description: "Gain 4.5x energy from nucluei",
+        locations: ["Pd"],
+        cost: { energy: 15000, electrons: 8, shards: { s: 0, p: 2, d: 1, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if ((state.upgrades.energyBooster || 0) < 4) {
+                state.upgrades.energyBooster = 4;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_booster_5",
+        name: "Hyper Energy Booster",
+        description: "Gain 8x energy from nucluei",
+        locations: ["Nb"],
+        cost: { energy: 28000, electrons: 12, shards: { s: 12, p: 3, d: 1, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if ((state.upgrades.energyBooster || 0) < 5) {
+                state.upgrades.energyBooster = 5;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_shard_1",
+        name: "Shard Capacity I",
+        description: "Increases max capacity to: 5 S, 2 P.",
+        locations: ["Na"],
+        cost: { energy: 0, electrons: 10, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.shardCapacity < 1) {
+                state.upgrades.shardCapacity = 1;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_shard_2",
+        name: "Shard Capacity II",
+        description: "Increases max capacity to: 6 S, 3 P, 1 D.",
+        locations: ["C", "Al"],
+        cost: { energy: 0, electrons: 10, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if (state.upgrades.shardCapacity < 2) {
+                state.upgrades.shardCapacity = 2;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_shard_3",
+        name: "Shard Capacity III",
+        description: "Increases max capacity to: 8 S, 5 P, 2 D.",
+        locations: ["I", "Te", "Ru", "Rh"],
+        cost: { energy: 0, electrons: 15, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (state.upgrades.shardCapacity < 3) {
+                state.upgrades.shardCapacity = 3;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_shard_4",
+        name: "Shard Capacity IV",
+        description: "Increases max capacity to: 12 S, 6 P, 4 D, 1 F.",
+        locations: ["Ba", "Cs", "Bi", "Po"],
+        cost: { energy: 0, electrons: 20, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (state.upgrades.shardCapacity < 4) {
+                state.upgrades.shardCapacity = 4;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_shard_5",
+        name: "Shard Capacity V",
+        description: "Increases max capacity to: 20 S, 10 P, 6 D, 2 F.",
+        locations: ["W", "V", "Bh"],
+        cost: { energy: 0, electrons: 25, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 3 },
+        onCraft: (state) => {
+            if (state.upgrades.shardCapacity < 5) {
+                state.upgrades.shardCapacity = 5;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_1",
+        name: "Energy Capacity I",
+        description: "Increases Max Energy to 4000 and Max Electrons to 6.",
+        locations: ["Li"],
+        cost: { energy: 2000, electrons: 1, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 1) {
+                state.upgrades.storageCapacity = 1;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_2",
+        name: "Energy Capacity II",
+        description: "Increases Max Energy to 8000 and Max Electrons to 10.",
+        locations: ["Mg"],
+        cost: { energy: 4000, electrons: 2, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 2) {
+                state.upgrades.storageCapacity = 2;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_3",
+        name: "Energy Capacity III",
+        description: "Increases Max Energy to 14000 and Max Electrons to 14.",
+        locations: ["O", "F", "Cl"],
+        cost: { energy: 8000, electrons: 3, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 3) {
+                state.upgrades.storageCapacity = 3;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_4",
+        name: "Energy Capacity IV",
+        description: "Increases Max Energy to 30000 and Max Electrons to 20.",
+        locations: ["In", "Cd", "Zn", "Cu", "Ag"],
+        cost: { energy: 12000, electrons: 6, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 4) {
+                state.upgrades.storageCapacity = 4;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_5",
+        name: "Energy Capacity V",
+        description: "Increases Max Energy to 55000 and Max Electrons to 30.",
+        locations: ["La", "Ac", "Rf"],
+        cost: { energy: 20000, electrons: 10, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 5) {
+                state.upgrades.storageCapacity = 5;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "upgrade_storage_6",
+        name: "Energy Capacity VI",
+        description: "Increases Max Energy to 100000 and Max Electrons to 40.",
+        locations: ["Ce"],
+        cost: { energy: 40000, electrons: 20, shards: { s: 10, p: 0, d: 3, f: 1 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (state.upgrades.storageCapacity < 6) {
+                state.upgrades.storageCapacity = 6;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "shielding_suit",
+        name: "Shielding Suit",
+        description: "Slows radioactive decay by 80%",
+        locations: ["Mc", "Lv", "Ts", "Fr", "Ra"],
+        cost: { energy: 60000, electrons: 8, shards: { s: 0, p: 6, d: 3, f: 2 }, catalyticOres: 3 },
+        onCraft: (state) => {
+            if (!state.upgrades.shieldingSuit) {
+                state.upgrades.shieldingSuit = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_boots_1",
+        name: "Basic Energy Boots",
+        description: "Reduces energy costs for movement by 40%",
+        locations: ["Ca", "K"],
+        cost: { energy: 3000, electrons: 2, shards: { s: 3, p: 1, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if ((state.upgrades.eBoots || 0) < 1) {
+                state.upgrades.eBoots = 1;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_boots_2",
+        name: "Normal Energy Boots",
+        description: "Reduces energy costs for movement by 70%",
+        locations: ["Fe", "Co", "Tl", "Pb"],
+        cost: { energy: 14000, electrons: 6, shards: { s: 6, p: 2, d: 1, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if ((state.upgrades.eBoots || 0) < 2) {
+                state.upgrades.eBoots = 2;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_boots_3",
+        name: "Super Energy Boots",
+        description: "Reduces energy costs for movement by 90%",
+        locations: ["Y", "Zr", "Ta", "Db", "Hf"],
+        cost: { energy: 20000, electrons: 10, shards: { s: 3, p: 3, d: 2, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if ((state.upgrades.eBoots || 0) < 3) {
+                state.upgrades.eBoots = 3;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "e_boots_4",
+        name: "Ultra Energy Boots",
+        description: "Reduces energy costs for movement by 96%",
+        locations: ["Pr", "Pa", "Th"],
+        cost: { energy: 50000, electrons: 20, shards: { s: 12, p: 6, d: 3, f: 2 }, catalyticOres: 3 },
+        onCraft: (state) => {
+            if ((state.upgrades.eBoots || 0) < 3) {
+                state.upgrades.eBoots = 3;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "h_drive",
+        name: "H-Drive",
+        description: "Teleports the player to Hydrogen remotely.",
+        locations: ["H"],
+        cost: { energy: 5000, electrons: 6, shards: { s: 3, p: 0, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if (!state.upgrades.hDrive) {
+                state.upgrades.hDrive = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "PES_scanner",
+        name: "PES Scanner",
+        description: "Highlights the crafting locations of the next Energy Capacity and Shard Capacity upgrades on the map",
+        locations: ["H"],
+        cost: { energy: 6000, electrons: 4, shards: { s: 3, p: 1, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (!state.upgrades.pesScanner) {
+                state.upgrades.pesScanner = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "shard_tracker",
+        name: "Shard Tracker",
+        description: "Highlights the locations of all s,p,d, and f Shards on the map",
+        locations: ["H"],
+        cost: { energy: 7000, electrons: 10, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (!state.upgrades.shardTracker) {
+                state.upgrades.shardTracker = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "proton_scanner",
+        name: "Proton Scanner",
+        description: "Highlights the crafting locations of the next Energy Booster on the map",
+        locations: ["H"],
+        cost: { energy: 8000, electrons: 2, shards: { s: 4, p: 2, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (!state.upgrades.protonScanner) {
+                state.upgrades.protonScanner = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "octet_remote",
+        name: "Octet Remote",
+        description: "Allows access to discovered noble gas banks remotely.",
+        locations: ["H"],
+        cost: { energy: 10000, electrons: 4, shards: { s: 6, p: 2, d: 1, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (!state.upgrades.octetRemote) {
+                state.upgrades.octetRemote = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "s_extractor",
+        name: "s-Shard Extractor",
+        description: "Allows you to harvest s-Shards found in the S block",
+        locations: ["Be"],
+        cost: { energy: 2400, electrons: 2, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (!state.upgrades.sExtractor) {
+                state.upgrades.sExtractor = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "p_extractor",
+        name: "p-Shard Extractor",
+        description: "Allows you to harvest p-Shards found in the P block",
+        locations: ["P"],
+        cost: { energy: 6000, electrons: 4, shards: { s: 3, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
+        onCraft: (state) => {
+            if (!state.upgrades.pExtractor) {
+                state.upgrades.pExtractor = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "d_extractor",
+        name: "d-Shard Extractor",
+        description: "Allows you to harvest d-Shards found in the D block",
+        locations: ["Nh"],
+        cost: { energy: 9000, electrons: 8, shards: { s: 5, p: 2, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if (!state.upgrades.dExtractor) {
+                state.upgrades.dExtractor = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "f_extractor",
+        name: "f-Shard Extractor",
+        description: "Allows you to harvest f-Shards found in the F block",
+        locations: ["Bh"],
+        cost: { energy: 20000, electrons: 14, shards: { s: 10, p: 4, d: 2, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (!state.upgrades.fExtractor) {
+                state.upgrades.fExtractor = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "shard_saver",
+        name: "Shard Saver",
+        description: "Reduces energy costs of all shard harvests by 60%",
+        locations: ["Se"],
+        cost: { energy: 14000, electrons: 3, shards: { s: 3, p: 2, d: 0, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if (!state.upgrades.shardSaver) {
+                state.upgrades.shardSaver = true;
+                return true;
+            }
+            return false;
+        }
+    }
+];

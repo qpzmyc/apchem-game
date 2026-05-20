@@ -1,0 +1,2081 @@
+import './style.css'
+import { elements, calculateRadiationDrain, getElementColor } from './src/elements.js'
+import { craftableItems } from './src/crafting.js'
+
+// --- Constants & Rules ---
+const DEV_MODE = false; // Set to true to enable playtest cheats (Q and Z)
+const GLOBAL_STEP = 600;
+const CELL_SIZE = 40;
+const CELL_GAP = 4;
+const CELL_PITCH = CELL_SIZE + CELL_GAP;
+const LAND_PADDING = 10;
+
+const COVALENT_GROUP = ['B', 'Si', 'Ge', 'As', 'Sb', 'Te', 'C', 'N', 'P', 'O', 'S', 'Se', 'F', 'Cl', 'Br', 'I'];
+
+function getMovementType(source, target) {
+    if (source.isFBlock && target.isFBlock) return 'IONIC';
+    if (source.group === 2 && target.group >= 13) return 'IONIC';
+    if (source.group >= 13 && target.group === 2) return 'IONIC';
+    if (COVALENT_GROUP.includes(source.symbol) && COVALENT_GROUP.includes(target.symbol)) return 'COVALENT';
+    return 'NORMAL';
+}
+
+// Global mapping of element symbols to objects for fast lookup
+const elementMap = {};
+elements.forEach(e => elementMap[e.symbol] = e);
+
+// --- Pre-calculated Trend Rankings for Minigame ---
+const trendRankings = {
+    electronegativity: [...elements].sort((a, b) => (b.electronegativity || -1) - (a.electronegativity || -1)),
+    electronAffinity: [...elements].sort((a, b) => (b.electronAffinity || -999) - (a.electronAffinity || -999)),
+    firstIonizationEnergy: [...elements].sort((a, b) => (b.firstIonizationEnergy || -1) - (a.firstIonizationEnergy || -1)),
+    atomicRadius: [...elements].sort((a, b) => (b.atomicRadius || -1) - (a.atomicRadius || -1)),
+    atomicNumber: [...elements].sort((a, b) => b.atomicNumber - a.atomicNumber),
+    molarMass: [...elements].sort((a, b) => b.molarMass - a.molarMass),
+    density: [...elements].sort((a, b) => (b.density || 0) - (a.density || 0)),
+    meltingPoint: [...elements].sort((a, b) => (b.meltingPoint || 0) - (a.meltingPoint || 0)),
+    boilingPoint: [...elements].sort((a, b) => (b.boilingPoint || 0) - (a.boilingPoint || 0)),
+};
+
+function getElementRank(element, category) {
+    return trendRankings[category].findIndex(e => e.symbol === element.symbol) + 1;
+}
+
+// Find Hydrogen as start
+const hydrogen = elements.find(e => e.symbol === 'H');
+
+// --- Upgrade Tiers ---
+const shardUpgrades = [
+    { s: 3, p: 0, d: 0, f: 0 },
+    { s: 5, p: 2, d: 0, f: 0 },
+    { s: 6, p: 3, d: 1, f: 0 },
+    { s: 8, p: 5, d: 2, f: 0 },
+    { s: 12, p: 6, d: 4, f: 1 },
+    { s: 20, p: 10, d: 6, f: 2 }
+];
+
+const storageUpgrades = [
+    { energy: 2000, electrons: 4 },
+    { energy: 4000, electrons: 6 },
+    { energy: 8000, electrons: 10 },
+    { energy: 14000, electrons: 14 },
+    { energy: 30000, electrons: 20 },
+    { energy: 55000, electrons: 30 },
+    { energy: 100000, electrons: 40 }
+];
+
+// --- Game State ---
+function showNotification(message, type = 'error') {
+    const container = document.getElementById('notification-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `notification-toast type-${type}`;
+    toast.innerText = message;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+const state = {
+    currentElement: hydrogen,
+    localX: Math.floor(hydrogen.gridSize / 2),
+    localY: Math.floor(hydrogen.gridSize / 2),
+    energy: 100,
+    maxEnergy: storageUpgrades[0].energy,
+    radiation: 0,
+    inventory: {
+        electrons: 0,
+        catalyticOres: 0,
+        shards: { s: 0, p: 0, d: 0, f: 0 }
+    },
+    upgrades: {
+        shardCapacity: 0,
+        storageCapacity: 0,
+        shieldingSuit: false,
+        eBoots: 0,
+        octetRemote: false,
+        hDrive: false,
+        pesScanner: false,
+        protonScanner: false,
+        shardTracker: false,
+        energyBooster: 0,
+        sExtractor: false,
+        pExtractor: false,
+        dExtractor: false,
+        fExtractor: false,
+        shardSaver: false
+    },
+    bridges: new Set(),
+    visitedElements: new Set(['H']),
+    pendingAction: null,
+    menuOpen: false,
+    remoteVaultActive: false,
+    inventoryOpen: false,
+    mapOpen: false,
+    elementDebts: {},
+    elementGiveCount: {},
+    banks: {},
+    canReset: false,
+    shardSpawns: [], // Array of { type: 's'|'p'|'d'|'f', elementSymbol, x, y }
+    won: false,
+    totalEnergyEarned: 100, // Start with the initial 100 energy
+    totalElectronsEarned: 0,
+    top5Placements: 0
+};
+
+// --- Canvas Setup ---
+const appEl = document.getElementById('app');
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+const energyFill = document.getElementById('energy-fill');
+const energyVal = document.getElementById('energy-value');
+const radFill = document.getElementById('rad-fill');
+const radVal = document.getElementById('rad-value');
+const electronCount = document.getElementById('electrons-count');
+const electronMax = document.getElementById('electrons-max');
+
+const inventoryOverlay = document.getElementById('inventory-overlay');
+const invSShards = document.getElementById('inv-s-shards');
+const capSShards = document.getElementById('cap-s-shards');
+const invPShards = document.getElementById('inv-p-shards');
+const capPShards = document.getElementById('cap-p-shards');
+const invDShards = document.getElementById('inv-d-shards');
+const capDShards = document.getElementById('cap-d-shards');
+const invFShards = document.getElementById('inv-f-shards');
+const capFShards = document.getElementById('cap-f-shards');
+const invCatalytic = document.getElementById('inv-catalytic');
+const btnCloseInventory = document.getElementById('btn-close-inventory');
+
+const craftingOverlay = document.getElementById('crafting-overlay');
+const craftingList = document.getElementById('crafting-list');
+const btnCloseCrafting = document.getElementById('btn-close-crafting');
+const btnCraft = document.getElementById('btn-craft');
+
+const actionPopup = document.createElement('div');
+actionPopup.className = 'action-popup';
+appEl.appendChild(actionPopup);
+
+const mapOverlay = document.getElementById('map-overlay');
+const mapGrid = document.getElementById('map-grid');
+const btnCloseMap = document.getElementById('btn-close-map');
+
+const winOverlay = document.getElementById('win-overlay');
+const winStatElements = document.getElementById('win-stat-elements');
+const winStatEnergy = document.getElementById('win-stat-energy');
+const winStatElectrons = document.getElementById('win-stat-electrons');
+const winStatTop5 = document.getElementById('win-stat-top5');
+const btnWinContinue = document.getElementById('btn-win-continue');
+
+// Nucleus Menu DOM
+const menuOverlay = document.getElementById('nucleus-menu-overlay');
+const menuTitle = document.getElementById('nucleus-menu-title');
+const menuStandard = document.getElementById('nucleus-menu-standard');
+const menuNoble = document.getElementById('nucleus-menu-noble');
+const costSpan = document.getElementById('grab-cost');
+const gainSpan = document.getElementById('give-gain');
+const grabRemainingSpan = document.getElementById('grab-remaining');
+const vaultElectronsSpan = document.getElementById('vault-electrons');
+const vaultEnergySpan = document.getElementById('vault-energy');
+
+const bankAmount = document.getElementById('bank-amount');
+const bankResource = document.getElementById('bank-resource');
+const capElectronsSpan = document.getElementById('cap-electrons');
+const capEnergySpan = document.getElementById('cap-energy');
+
+const nobleCapacities = {
+    'He': { electrons: 4, energy: 1000 },
+    'Ne': { electrons: 4, energy: 3500 },
+    'Ar': { electrons: 6, energy: 8000 },
+    'Kr': { electrons: 8, energy: 17000 },
+    'Xe': { electrons: 12, energy: 35000 },
+    'Rn': { electrons: 16, energy: 100000 },
+    'Og': { electrons: 24, energy: 300000 }
+};
+
+// --- Camera & Render Loop ---
+const camera = { x: state.currentElement.xpos * GLOBAL_STEP, y: state.currentElement.ypos * GLOBAL_STEP, scale: 0.8 };
+
+function getPlayerGlobalPos() {
+    const el = state.currentElement;
+    const landSize = el.gridSize * CELL_PITCH - CELL_GAP + (LAND_PADDING * 2);
+    const startX = (el.xpos * GLOBAL_STEP) - (landSize / 2);
+    const startY = (el.ypos * GLOBAL_STEP) - (landSize / 2);
+    return {
+        x: startX + LAND_PADDING + (state.localX * CELL_PITCH) + (CELL_SIZE / 2),
+        y: startY + LAND_PADDING + (state.localY * CELL_PITCH) + (CELL_SIZE / 2)
+    };
+}
+
+function getExitGlobalPos(el, dx, dy) {
+    const landSize = el.gridSize * CELL_PITCH - CELL_GAP + (LAND_PADDING * 2);
+    const startX = (el.xpos * GLOBAL_STEP) - (landSize / 2);
+    const startY = (el.ypos * GLOBAL_STEP) - (landSize / 2);
+
+    let x = Math.floor(el.gridSize / 2);
+    let y = Math.floor(el.gridSize / 2);
+
+    if (dx === 1) x = el.gridSize - 1;
+    if (dx === -1) x = 0;
+    if (dy === 1) y = el.gridSize - 1;
+    if (dy === -1) y = 0;
+
+    return {
+        x: startX + LAND_PADDING + x * CELL_PITCH + (CELL_SIZE / 2),
+        y: startY + LAND_PADDING + y * CELL_PITCH + (CELL_SIZE / 2)
+    };
+}
+
+function renderLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Update Camera (Smooth Pan)
+    const pPos = getPlayerGlobalPos();
+    camera.x += (pPos.x - camera.x) * 0.1;
+    camera.y += (pPos.y - camera.y) * 0.1;
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(camera.scale, camera.scale);
+    ctx.translate(-camera.x, -camera.y);
+
+    // 1. Draw Lines (Underneath)
+    ctx.lineWidth = 6;
+    elements.forEach(el => {
+        // Only check right and down to avoid drawing lines twice
+        const checks = [{ dx: 1, dy: 0 }, { dx: 0, dy: 1 }];
+
+        checks.forEach(({ dx, dy }) => {
+            const target = getNearestElementFrom(el, dx, dy);
+            if (!target) return;
+
+            let valid = true;
+            if (el.group === 2 && dx === 1 && target.group >= 3 && target.group <= 12) valid = false;
+            if (el.group === 3 && dx === -1 && target.group === 2) valid = false;
+            if (el.group === 18 && dy !== 0) valid = false;
+            if (el.group === 18 && dx === 1) valid = false;
+            // Block paths between transition metals (y<=7) and f-block rows (y>=9)
+            if (el.ypos <= 7 && target.ypos >= 9) valid = false;
+            if (el.ypos >= 9 && target.ypos <= 7) valid = false;
+            // Exception: Ac → Ce path
+            if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
+                valid = true;
+            }
+
+            let moveType = getMovementType(el, target);
+
+            if (!valid) return;
+
+            let drawLine = false;
+            let lineColor = '';
+
+            if (moveType === 'NORMAL') {
+                drawLine = true;
+                lineColor = 'rgba(100, 255, 100, 0.8)'; // Green
+            } else if (state.bridges.has(el.symbol + '-' + target.symbol)) {
+                drawLine = true;
+                if (moveType === 'IONIC') lineColor = 'rgba(200, 100, 255, 0.8)'; // Purple
+                else if (moveType === 'COVALENT') lineColor = 'rgba(100, 200, 255, 0.8)'; // Blue
+            }
+
+            if (drawLine) {
+                let pos1 = getExitGlobalPos(el, dx, dy);
+                let pos2 = getExitGlobalPos(target, -dx, -dy);
+
+                // Shorten lines so they don't touch the grids
+                const len = Math.hypot(pos2.x - pos1.x, pos2.y - pos1.y);
+                const gap = 15;
+                if (len > gap * 2) {
+                    const dirX = (pos2.x - pos1.x) / len;
+                    const dirY = (pos2.y - pos1.y) / len;
+                    pos1.x += dirX * gap;
+                    pos1.y += dirY * gap;
+                    pos2.x -= dirX * gap;
+                    pos2.y -= dirY * gap;
+                }
+
+                ctx.strokeStyle = lineColor;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = lineColor;
+                ctx.beginPath();
+                ctx.moveTo(pos1.x, pos1.y);
+                ctx.lineTo(pos2.x, pos2.y);
+                ctx.stroke();
+            }
+        });
+    });
+    ctx.shadowBlur = 0;
+
+    // 2. Draw Element Lands
+    elements.forEach(el => {
+        const landSize = el.gridSize * CELL_PITCH - CELL_GAP + (LAND_PADDING * 2);
+        const startX = (el.xpos * GLOBAL_STEP) - (landSize / 2);
+        const startY = (el.ypos * GLOBAL_STEP) - (landSize / 2);
+
+        // Land Background
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1;
+        if (ctx.roundRect) {
+            ctx.beginPath();
+            ctx.roundRect(startX, startY, landSize, landSize, 12);
+            ctx.fill(); ctx.stroke();
+        } else {
+            ctx.fillRect(startX, startY, landSize, landSize);
+            ctx.strokeRect(startX, startY, landSize, landSize);
+        }
+
+        // Grid Cells
+        const centerIdx = Math.floor(el.gridSize / 2);
+        for (let y = 0; y < el.gridSize; y++) {
+            for (let x = 0; x < el.gridSize; x++) {
+                const cellX = startX + LAND_PADDING + x * CELL_PITCH;
+                const cellY = startY + LAND_PADDING + y * CELL_PITCH;
+
+                if (x === centerIdx && y === centerIdx) {
+                    // Nucleus Node
+                    const elColor = getElementColor(el);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = elColor;
+                    ctx.beginPath();
+                    ctx.arc(cellX + CELL_SIZE / 2, cellY + CELL_SIZE / 2, CELL_SIZE / 2 + 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = elColor;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = elColor;
+                    ctx.font = 'bold 16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(el.symbol, cellX + CELL_SIZE / 2, cellY + CELL_SIZE / 2);
+                } else {
+                    // Cloud Node
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; // Brightened grid lines
+                    ctx.lineWidth = 1;
+
+                    let isExit = false;
+                    let exitColor = null;
+
+                    const isMidX = (x === centerIdx);
+                    const isMidY = (y === centerIdx);
+                    if ((isMidX && (y === 0 || y === el.gridSize - 1)) || (isMidY && (x === 0 || x === el.gridSize - 1))) {
+                        let dx = 0, dy = 0;
+                        if (x === 0) dx = -1;
+                        if (x === el.gridSize - 1) dx = 1;
+                        if (y === 0) dy = -1;
+                        if (y === el.gridSize - 1) dy = 1;
+
+                        const target = getNearestElementFrom(el, dx, dy);
+                        let valid = false;
+                        let moveType = 'NORMAL';
+
+                        if (target) {
+                            valid = true;
+                            if (el.group === 2 && dx === 1 && target.group >= 3 && target.group <= 12) valid = false;
+                            if (el.group === 3 && dx === -1 && target.group === 2) valid = false;
+                            if (el.group === 18 && dy !== 0) valid = false;
+                            if (el.group === 18 && dx === 1) valid = false;
+                            // Block paths between transition metals (y<=7) and f-block rows (y>=9)
+                            if (el.ypos <= 7 && target.ypos >= 9) valid = false;
+                            if (el.ypos >= 9 && target.ypos <= 7) valid = false;
+                            // Exception: Ac → Ce path
+                            if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
+                                valid = true;
+                            }
+                            moveType = getMovementType(el, target);
+                        }
+
+
+                        if (valid) {
+                            isExit = true;
+                            if (moveType === 'IONIC') exitColor = 'rgba(200, 100, 255, 1)';
+                            else if (moveType === 'COVALENT') exitColor = 'rgba(100, 200, 255, 1)';
+                            else exitColor = 'rgba(100, 255, 100, 1)'; // Normal Green
+                        }
+                    }
+
+                    if (isExit && exitColor) {
+                        ctx.fillStyle = exitColor.replace('1)', '0.15)');
+                        ctx.strokeStyle = exitColor.replace('1)', '0.5)');
+                        ctx.shadowBlur = 6;
+                        ctx.shadowColor = exitColor;
+                    }
+
+                    if (ctx.roundRect) {
+                        ctx.beginPath();
+                        ctx.roundRect(cellX, cellY, CELL_SIZE, CELL_SIZE, 4);
+                        ctx.fill(); ctx.stroke();
+                    } else {
+                        ctx.fillRect(cellX, cellY, CELL_SIZE, CELL_SIZE);
+                        ctx.strokeRect(cellX, cellY, CELL_SIZE, CELL_SIZE);
+                    }
+                    ctx.shadowBlur = 0;
+
+                    // Draw shard icon if present on this cell
+                    const shardHere = getShardAt(el.symbol, x, y);
+                    if (shardHere) {
+                        const shardColors = { s: '#ff6666', p: '#66ccff', d: '#ffcc33', f: '#cc66ff' };
+                        const sc = shardColors[shardHere.type];
+                        const cx = cellX + CELL_SIZE / 2;
+                        const cy = cellY + CELL_SIZE / 2;
+                        const r = 12; // Increased from 8
+                        ctx.save();
+                        ctx.shadowBlur = 20; // Increased from 10
+                        ctx.shadowColor = sc;
+                        ctx.fillStyle = sc;
+                        ctx.beginPath();
+                        ctx.moveTo(cx, cy - r);
+                        ctx.lineTo(cx + r, cy);
+                        ctx.lineTo(cx, cy + r);
+                        ctx.lineTo(cx - r, cy);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                }
+            }
+        }
+    });
+
+    // 3. Draw Player
+    ctx.strokeStyle = '#fff';
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#fff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(pPos.x, pPos.y, 14, 0, Math.PI * 2); // Larger hollow circle
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+    requestAnimationFrame(renderLoop);
+}
+
+// --- Nucleus Menu Logic ---
+function openNucleusMenu() {
+    const el = state.remoteVaultActive ? { symbol: 'REMOTE', name: 'Remote Noble Vault', group: 18 } : state.currentElement;
+    state.menuOpen = true;
+    clearAction();
+    menuOverlay.style.display = 'flex';
+    menuTitle.innerText = state.remoteVaultActive ? el.name : `${el.atomicNumber} - ${el.name}`;
+    menuTitle.style.color = state.remoteVaultActive ? '#ff00ff' : getElementColor(el);
+
+    if (el.group === 18) {
+        // Noble Gas
+        menuStandard.style.display = 'none';
+        menuNoble.style.display = 'block'; // Or flex if you styled it
+
+        let sumElectrons = 0;
+        let sumEnergy = 0;
+        let capElectrons = 0;
+        let capEnergy = 0;
+
+        if (state.remoteVaultActive) {
+            if (!state.banks['REMOTE']) state.banks['REMOTE'] = { electrons: 0, energy: 0 };
+            for (const sym of state.visitedElements) {
+                const tempEl = elements.find(e => e.symbol === sym);
+                if (tempEl && tempEl.group === 18 && nobleCapacities[sym]) {
+                    capElectrons += nobleCapacities[sym].electrons;
+                    capEnergy += nobleCapacities[sym].energy;
+                    if (state.banks[sym]) {
+                        sumElectrons += state.banks[sym].electrons;
+                        sumEnergy += state.banks[sym].energy;
+                    }
+                }
+            }
+            state.banks['REMOTE'].electrons = sumElectrons;
+            state.banks['REMOTE'].energy = sumEnergy;
+        } else {
+            capElectrons = nobleCapacities[el.symbol].electrons;
+            capEnergy = nobleCapacities[el.symbol].energy;
+            const bank = state.banks ? state.banks[el.symbol] : null;
+            if (!bank) {
+                if (!state.banks) state.banks = {};
+                state.banks[el.symbol] = { electrons: 0, energy: 0 };
+            }
+        }
+
+        vaultElectronsSpan.innerText = state.banks[el.symbol].electrons;
+        vaultEnergySpan.innerText = Math.round(state.banks[el.symbol].energy);
+        capElectronsSpan.innerText = capElectrons;
+        capEnergySpan.innerText = capEnergy;
+
+        const storeBtn = document.getElementById('btn-bank-store');
+        if (state.remoteVaultActive) {
+            storeBtn.style.display = 'none';
+        } else {
+            storeBtn.style.display = 'block';
+        }
+    } else {
+        // Standard Element
+        menuNoble.style.display = 'none';
+        menuStandard.style.display = 'grid'; // Grid display for 2x2
+
+        const debt = state.elementDebts[el.symbol] || 0;
+        const giveCount = state.elementGiveCount[el.symbol] || 0;
+
+        // 200x first ionization energy, multiplied by 1.2 for each prior grab
+        const baseCost = el.firstIonizationEnergy ? Math.round(el.firstIonizationEnergy * 200) : 2000;
+        const currentCost = Math.round(baseCost * Math.pow(1.2, debt));
+
+        // 2000x electron affinity, multiplied by 0.8 for each prior give
+        const baseGain = Math.round(2000 * (el.electronAffinity || 0));
+        const gain = Math.round(baseGain * Math.pow(0.8, giveCount));
+
+        const electronsRemaining = el.atomicNumber - debt + giveCount;
+
+        costSpan.innerText = currentCost;
+        gainSpan.innerText = gain;
+        if (grabRemainingSpan) grabRemainingSpan.innerText = electronsRemaining;
+
+        const grabBtn = document.getElementById('btn-grab-electron');
+        if (electronsRemaining <= 0) {
+            grabBtn.classList.add('disabled');
+            grabBtn.disabled = true;
+            grabBtn.style.opacity = '0.5';
+            costSpan.innerText = 'DEPLETED';
+        } else {
+            grabBtn.classList.remove('disabled');
+            grabBtn.disabled = false;
+            grabBtn.style.opacity = '1';
+        }
+
+        const giveBtn = document.getElementById('btn-give-electron');
+        if (state.inventory.electrons <= 0 || gain <= 0) {
+            giveBtn.classList.add('disabled');
+            giveBtn.disabled = true;
+            giveBtn.style.opacity = '0.5';
+        } else {
+            giveBtn.classList.remove('disabled');
+            giveBtn.disabled = false;
+            giveBtn.style.opacity = '1';
+        }
+
+        // Crafting Button
+        const availableCrafts = craftableItems.filter(item => item.locations.includes(el.symbol));
+        if (availableCrafts.length > 0) {
+            btnCraft.classList.remove('disabled');
+            btnCraft.disabled = false;
+            btnCraft.style.opacity = '1';
+            btnCraft.style.cursor = 'pointer';
+            btnCraft.querySelector('p').innerText = `${availableCrafts.length} Recipes Available`;
+        } else {
+            btnCraft.classList.add('disabled');
+            btnCraft.disabled = true;
+            btnCraft.style.opacity = '0.5';
+            btnCraft.style.cursor = 'not-allowed';
+            btnCraft.querySelector('p').innerText = `Unavailable`;
+        }
+    }
+}
+
+function closeNucleusMenu() {
+    state.menuOpen = false;
+    menuOverlay.style.display = 'none';
+
+    if (state.remoteVaultActive) {
+        state.remoteVaultActive = false;
+    } else {
+        // Re-show the nucleus prompt since the player is still standing on it
+        promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+    }
+}
+
+document.getElementById('btn-close-nucleus').addEventListener('click', closeNucleusMenu);
+
+// ============================
+// NUCLEUS DRAFTING MINIGAME
+// ============================
+const minigameOverlay = document.getElementById('minigame-overlay');
+const minigameRound = document.getElementById('minigame-round');
+const minigameCardSymbol = document.getElementById('minigame-card-symbol');
+const minigameCardName = document.getElementById('minigame-card-name');
+const minigameActiveArea = document.getElementById('minigame-active-area');
+const minigameResults = document.getElementById('minigame-results');
+const minigameResultList = document.getElementById('minigame-result-list');
+const minigameCategoriesContainer = document.getElementById('minigame-categories');
+
+// All possible categories (normal versions)
+const allCategoryLabels = {
+    electronegativity: 'High Electronegativity',
+    electronAffinity: 'High Electron Affinity',
+    firstIonizationEnergy: 'High First Ionization Energy',
+    atomicRadius: 'Large Atomic Radius',
+    atomicNumber: 'High Coulombic Charge',
+    molarMass: 'High Molar Mass',
+    density: 'High Density',
+    meltingPoint: 'High Melting Point',
+    boilingPoint: 'High Boiling Point'
+};
+
+// Opposite labels (for "inverted" categories)
+const oppositeCategoryLabels = {
+    electronegativity: 'Low Electronegativity',
+    electronAffinity: 'Low Electron Affinity',
+    firstIonizationEnergy: 'Low First Ionization Energy',
+    atomicRadius: 'Small Atomic Radius',
+    atomicNumber: 'Low Coulombic Charge',
+    molarMass: 'Low Molar Mass',
+    density: 'Low Density',
+    meltingPoint: 'Low Melting Point',
+    boilingPoint: 'Low Boiling Point'
+};
+
+// The 6 base categories (periods 1-5)
+const baseCategories = ['electronegativity', 'electronAffinity', 'firstIonizationEnergy', 'atomicRadius', 'atomicNumber', 'molarMass'];
+// Extended pool (period 6+)
+const extendedCategories = [...baseCategories, 'density', 'meltingPoint', 'boilingPoint'];
+
+let minigameState = {
+    active: false,
+    spinning: false,
+    round: 0,
+    totalSlots: 0,
+    dealtElements: [],
+    backupElements: [],
+    skipsRemaining: 3,
+    currentElement: null,
+    assignments: {},      // { slotKey: element }
+    slotConfigs: [],      // [{category, isOpposite, slotKey}]
+    lockedSlots: new Set(),
+    nucleusElement: null,
+    runningTotalRank: 0,
+    pendingReward: 0
+};
+
+// Skips per period
+const skipsPerPeriod = { 1: 2, 2: 3, 3: 3, 4: 4, 5: 4, 6: 5, 7: 6 };
+
+// Helper: pick N random items from array without replacement
+function pickRandom(arr, n) {
+    const shuffled = [...arr].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, Math.min(n, arr.length));
+}
+
+// Helper: randomly pick how many opposites given a range [min, max]
+function randomInRange(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function buildMinigameConfig(period) {
+    let totalSlots, categoryPool, numOpposites;
+
+    switch (period) {
+        case 1:
+            totalSlots = 3;
+            categoryPool = baseCategories;
+            numOpposites = 0;
+            break;
+        case 2:
+            totalSlots = 4;
+            categoryPool = baseCategories;
+            numOpposites = 0;
+            break;
+        case 3:
+            totalSlots = 4;
+            categoryPool = baseCategories;
+            numOpposites = randomInRange(0, 2);
+            break;
+        case 4:
+            totalSlots = 6;
+            categoryPool = baseCategories;
+            numOpposites = 0;
+            break;
+        case 5:
+            totalSlots = 6;
+            categoryPool = baseCategories;
+            numOpposites = randomInRange(1, 3);
+            break;
+        case 6:
+            totalSlots = 6;
+            categoryPool = extendedCategories;
+            numOpposites = randomInRange(1, 3);
+            break;
+        case 7:
+        default:
+            totalSlots = 9;
+            categoryPool = extendedCategories;
+            numOpposites = randomInRange(0, 9);
+            break;
+    }
+
+    // Pick categories from the pool
+    const selectedCategories = pickRandom(categoryPool, totalSlots);
+
+    // Decide which ones become opposites
+    const oppositeIndices = new Set();
+    if (numOpposites > 0) {
+        const indices = [...Array(selectedCategories.length).keys()];
+        const shuffledIndices = indices.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < Math.min(numOpposites, selectedCategories.length); i++) {
+            oppositeIndices.add(shuffledIndices[i]);
+        }
+    }
+
+    // Build slot configs
+    const slotConfigs = selectedCategories.map((cat, i) => {
+        const isOpposite = oppositeIndices.has(i);
+        const slotKey = isOpposite ? `opposite_${cat}` : cat;
+        return { category: cat, isOpposite, slotKey };
+    });
+
+    return { totalSlots, slotConfigs };
+}
+
+function getGridColumns(totalSlots) {
+    if (totalSlots <= 3) return 3;       // 1x3
+    if (totalSlots <= 4) return 2;       // 2x2
+    if (totalSlots <= 6) return 3;       // 2x3
+    return 3;                            // 3x3
+}
+
+// Calculate live energy from running total rank
+function calcMinigameEnergy(totalRank) {
+    const protons = minigameState.nucleusElement.atomicNumber;
+    const baseEnergy = Math.pow(0.986, totalRank - 34) * Math.pow(1.05, protons + 5) * 1200;
+    const boosterLvl = state.upgrades.energyBooster || 0;
+    const boosterMultipliers = { 0: 1, 1: 1.5, 2: 2, 3: 3, 4: 4.5, 5: 8 };
+    const mult = boosterMultipliers[boosterLvl] || 1;
+    return Math.round(baseEnergy * mult);
+}
+
+// Update the collect button text and state
+function updateCollectButton() {
+    const btn = document.getElementById('btn-collect-energy');
+    const energy = calcMinigameEnergy(minigameState.runningTotalRank);
+    minigameState.pendingReward = energy;
+    btn.innerText = `Collect ${energy} Energy`;
+
+    const isComplete = minigameState.round >= minigameState.totalSlots;
+    btn.disabled = !isComplete;
+    btn.style.opacity = isComplete ? '1' : '0.5';
+}
+
+// Find the best slot for an element among available (unlocked) slots
+function findBestSlotForElement(el) {
+    let bestRank = 999;
+    let bestSlot = null;
+
+    for (const slot of minigameState.slotConfigs) {
+        if (minigameState.lockedSlots.has(slot.slotKey)) continue;
+        let rank = getElementRank(el, slot.category);
+        if (slot.isOpposite) rank = 119 - rank;
+        if (rank < bestRank) {
+            bestRank = rank;
+            bestSlot = slot;
+        }
+    }
+
+    return { bestSlot, bestRank };
+}
+
+// Show the rank notification
+function showRankNotification(el, rank, bestSlot, bestRank, placedSlot) {
+    const notif = document.getElementById('minigame-notification');
+    const rankText = document.getElementById('notif-rank-text');
+    const bestText = document.getElementById('notif-best-text');
+
+    const placedLabel = placedSlot.isOpposite
+        ? oppositeCategoryLabels[placedSlot.category]
+        : allCategoryLabels[placedSlot.category];
+
+    rankText.innerHTML = `<strong>${el.name}</strong> → Rank <strong>#${rank}</strong> in ${placedLabel}`;
+
+    if (bestSlot) {
+        const bestLabel = bestSlot.isOpposite
+            ? oppositeCategoryLabels[bestSlot.category]
+            : allCategoryLabels[bestSlot.category];
+        if (bestSlot.slotKey === placedSlot.slotKey) {
+            bestText.innerHTML = `✅ Best available slot!`;
+            bestText.style.color = '#4ade80';
+        } else {
+            bestText.innerHTML = `💡 Best was: ${bestLabel} (Rank #${bestRank})`;
+            bestText.style.color = '#facc15';
+        }
+    } else {
+        bestText.innerHTML = '';
+    }
+
+    notif.style.display = 'block';
+    // Re-trigger animation
+    notif.style.animation = 'none';
+    notif.offsetHeight; // force reflow
+    notif.style.animation = 'notifFadeIn 0.3s ease';
+}
+
+function startMinigame() {
+    // Close the nucleus menu
+    menuOverlay.style.display = 'none';
+
+    const period = state.currentElement.period || 1;
+    const config = buildMinigameConfig(period);
+
+    minigameState.active = true;
+    minigameState.round = 0;
+    minigameState.totalSlots = config.totalSlots;
+    minigameState.assignments = {};
+    minigameState.lockedSlots = new Set();
+    minigameState.slotConfigs = config.slotConfigs;
+    minigameState.nucleusElement = state.currentElement;
+    minigameState.skipsRemaining = skipsPerPeriod[period] || 3;
+    minigameState.runningTotalRank = 0;
+    minigameState.pendingReward = 0;
+
+    // Pick N random distinct elements from the full list, plus backups for skipping
+    const shuffled = [...elements].sort(() => Math.random() - 0.5);
+    minigameState.dealtElements = shuffled.slice(0, config.totalSlots);
+    minigameState.backupElements = shuffled.slice(config.totalSlots);
+
+    // Dynamically build category buttons
+    minigameCategoriesContainer.innerHTML = '';
+    const cols = getGridColumns(config.totalSlots);
+    minigameCategoriesContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+    config.slotConfigs.forEach(slot => {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-secondary category-btn';
+        btn.dataset.slotKey = slot.slotKey;
+
+        const labelText = slot.isOpposite
+            ? oppositeCategoryLabels[slot.category]
+            : allCategoryLabels[slot.category];
+
+        btn.innerHTML = `
+            <div class="cat-label">${labelText}</div>
+            <div class="cat-value"></div>
+        `;
+
+        // Color opposite categories with a warning tint
+        if (slot.isOpposite) {
+            btn.style.borderColor = 'rgba(255, 100, 100, 0.4)';
+            btn.style.background = 'rgba(255, 50, 50, 0.08)';
+        }
+
+        btn.addEventListener('click', () => {
+            assignToSlot(slot.slotKey);
+        });
+
+        minigameCategoriesContainer.appendChild(btn);
+    });
+
+    // Reset UI
+    minigameActiveArea.style.display = 'flex';
+    minigameResults.style.display = 'none';
+    document.getElementById('minigame-notification').style.display = 'none';
+
+    minigameOverlay.style.display = 'flex';
+    updateCollectButton();
+    dealNextElement();
+}
+
+function dealNextElement() {
+    if (minigameState.round >= minigameState.totalSlots) {
+        calculateResults();
+        return;
+    }
+
+    const finalEl = minigameState.dealtElements[minigameState.round];
+    minigameState.spinning = true;
+
+    const skipBtn = document.getElementById('btn-skip-element');
+    skipBtn.disabled = true;
+    skipBtn.style.opacity = '0.5';
+
+    const card = document.getElementById('minigame-card');
+    card.classList.remove('selected');
+
+    const minigameCardNumber = document.getElementById('minigame-card-number');
+
+    let spins = 0;
+    const maxSpins = 15;
+    const interval = setInterval(() => {
+        const randomEl = elements[Math.floor(Math.random() * elements.length)];
+        minigameCardNumber.innerText = randomEl.atomicNumber;
+        minigameCardSymbol.innerText = randomEl.symbol;
+        minigameCardName.innerText = randomEl.name;
+        const color = getElementColor(randomEl);
+        card.style.borderColor = color;
+        card.style.boxShadow = `0 0 25px ${color}`;
+        minigameCardSymbol.style.color = color;
+
+        spins++;
+        if (spins >= maxSpins) {
+            clearInterval(interval);
+            minigameState.currentElement = finalEl;
+            minigameState.spinning = false;
+
+            minigameRound.innerText = `Round ${minigameState.round + 1} / ${minigameState.totalSlots}`;
+            minigameCardNumber.innerText = finalEl.atomicNumber;
+            minigameCardSymbol.innerText = finalEl.symbol;
+            minigameCardName.innerText = finalEl.name;
+            const finalColor = getElementColor(finalEl);
+            card.style.borderColor = finalColor;
+            card.style.boxShadow = `0 0 25px ${finalColor}`;
+            minigameCardSymbol.style.color = finalColor;
+
+            // Trigger pulse animation
+            void card.offsetWidth; // Force reflow to restart animation
+            card.classList.add('selected');
+
+            if (minigameState.skipsRemaining <= 0) {
+                skipBtn.disabled = true;
+                skipBtn.style.opacity = '0.5';
+                skipBtn.innerText = '⏭ Skip (0 left)';
+            } else {
+                skipBtn.disabled = false;
+                skipBtn.style.opacity = '1';
+                skipBtn.innerText = `⏭ Skip (${minigameState.skipsRemaining} left)`;
+            }
+        }
+    }, 50);
+}
+
+// Skip button click listener
+document.getElementById('btn-skip-element').addEventListener('click', () => {
+    if (!minigameState.active || minigameState.skipsRemaining <= 0 || minigameState.spinning) return;
+    if (minigameState.backupElements.length === 0) return;
+
+    minigameState.skipsRemaining--;
+    const newEl = minigameState.backupElements.pop();
+    minigameState.dealtElements[minigameState.round] = newEl;
+
+    dealNextElement();
+});
+
+function assignToSlot(slotKey) {
+    if (!minigameState.active || !minigameState.currentElement || minigameState.spinning) return;
+    if (minigameState.lockedSlots.has(slotKey)) return;
+
+    const el = minigameState.currentElement;
+
+    // Find the best available slot BEFORE locking this one
+    const { bestSlot, bestRank } = findBestSlotForElement(el);
+
+    // Find the slot config for the chosen slot
+    const placedSlot = minigameState.slotConfigs.find(s => s.slotKey === slotKey);
+
+    // Calculate rank for the placement
+    let rank = getElementRank(el, placedSlot.category);
+    if (placedSlot.isOpposite) rank = 119 - rank;
+
+    // Lock it
+    minigameState.assignments[slotKey] = el;
+    minigameState.lockedSlots.add(slotKey);
+    minigameState.runningTotalRank += rank;
+    if (rank <= 5) state.top5Placements++;
+
+    // Determine rank quality class
+    let rankClass = 'cat-rank-bad';
+    if (rank <= 10) rankClass = 'cat-rank-good';
+    else if (rank <= 40) rankClass = 'cat-rank-ok';
+
+    // Update the button visually: "Name (Rank #X)"
+    const buttons = minigameCategoriesContainer.querySelectorAll('.category-btn');
+    buttons.forEach(btn => {
+        if (btn.dataset.slotKey === slotKey) {
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            btn.classList.add('disabled');
+            const valDiv = btn.querySelector('.cat-value');
+            if (valDiv) {
+                valDiv.innerHTML = `${el.name} <span class="cat-rank-display ${rankClass}">(Rank #${rank})</span>`;
+            }
+        }
+    });
+
+    // Show rank notification
+    showRankNotification(el, rank, bestSlot, bestRank, placedSlot);
+
+    // Update live energy
+    updateCollectButton();
+
+    minigameState.round++;
+    dealNextElement();
+}
+
+function calculateResults() {
+    minigameActiveArea.style.display = 'none';
+    minigameResults.style.display = 'block';
+
+    let resultHTML = '';
+
+    for (const slot of minigameState.slotConfigs) {
+        const el = minigameState.assignments[slot.slotKey];
+        if (!el) continue;
+
+        let rank = getElementRank(el, slot.category);
+        if (slot.isOpposite) rank = 119 - rank;
+
+        const labelText = slot.isOpposite
+            ? oppositeCategoryLabels[slot.category]
+            : allCategoryLabels[slot.category];
+
+        resultHTML += `<div class="result-item">
+            <strong>${labelText}</strong><br>
+            ${el.name} <span class="rank">Rank #${rank}</span>
+        </div>`;
+    }
+
+    minigameResultList.innerHTML = resultHTML;
+
+    // Final energy update
+    updateCollectButton();
+}
+
+// Collect energy button
+document.getElementById('btn-collect-energy').addEventListener('click', () => {
+    if (!minigameState.active) return;
+    if (minigameState.round < minigameState.totalSlots) return;
+
+    if (minigameState.pendingReward) {
+        const reward = minigameState.pendingReward;
+        const before = state.energy;
+        state.energy = Math.min(state.maxEnergy, state.energy + reward);
+        state.totalEnergyEarned += (state.energy - before);
+        minigameState.pendingReward = 0;
+    }
+
+    // Catalytic Ore Reward Logic
+    const el = state.currentElement;
+    if (el && el.symbol !== 'H') {
+        const numCategories = minigameState.totalSlots;
+        const avgRank = minigameState.runningTotalRank / numCategories;
+        let chance = Math.pow(0.9, avgRank) * 2;
+
+        // Tripled in d-block (groups 3-12 and not f-block)
+        if (el.group >= 3 && el.group <= 12 && !el.isFBlock) {
+            chance *= 3;
+        }
+        // Doubled in period 7
+        if (el.period === 7) {
+            chance *= 2;
+        }
+        // Halved in period 2 and 3
+        if (el.period === 2 || el.period === 3) {
+            chance *= 0.5;
+        }
+
+        const roll = Math.random();
+        if (roll < chance) {
+            state.inventory.catalyticOres++;
+            showNotification("You recieved a Catalytic Ore!", 'success');
+        }
+    }
+
+    minigameState.active = false;
+    minigameOverlay.style.display = 'none';
+    state.menuOpen = false;
+    updateHUD();
+    // Re-show nucleus prompt
+    promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+});
+
+// Wire the Harvest Energy button to trigger the minigame
+document.getElementById('btn-harvest').addEventListener('click', () => {
+    startMinigame();
+});
+
+document.getElementById('btn-grab-electron').addEventListener('click', () => {
+    const maxElectrons = storageUpgrades[state.upgrades.storageCapacity].electrons;
+    if (state.inventory.electrons >= maxElectrons) {
+        showNotification("Electron hotbar is full! Give or use electrons before grabbing more.");
+        return;
+    }
+    const el = state.currentElement;
+    const debt = state.elementDebts[el.symbol] || 0;
+    const baseCost = el.firstIonizationEnergy ? Math.round(el.firstIonizationEnergy * 200) : 2000;
+    const currentCost = Math.round(baseCost * Math.pow(1.2, debt));
+
+    if (state.energy < currentCost) {
+        showNotification("Not enough energy to grab this electron!");
+        return;
+    }
+    state.energy -= currentCost;
+    state.inventory.electrons++;
+    state.totalElectronsEarned++;
+    state.elementDebts[el.symbol] = debt + 1;
+    updateHUD();
+    openNucleusMenu();
+});
+
+document.getElementById('btn-give-electron').addEventListener('click', () => {
+    const el = state.currentElement;
+    const giveCount = state.elementGiveCount[el.symbol] || 0;
+    const baseGain = Math.round(2000 * (el.electronAffinity || 0));
+    const gain = Math.round(baseGain * Math.pow(0.8, giveCount));
+
+    if (state.inventory.electrons > 0 && gain > 0) {
+        state.inventory.electrons--;
+        const before = state.energy;
+        state.energy = Math.min(state.maxEnergy, state.energy + gain);
+        state.totalEnergyEarned += (state.energy - before);
+        state.elementGiveCount[el.symbol] = giveCount + 1;
+        updateHUD();
+        openNucleusMenu();
+    }
+});
+
+document.getElementById('btn-bank-store').addEventListener('click', () => {
+    const el = state.remoteVaultActive ? { symbol: 'REMOTE' } : state.currentElement;
+    const res = bankResource.value;
+    const rawAmt = parseInt(bankAmount.value) || 0;
+    if (rawAmt <= 0) return;
+
+    let cap = 0;
+    if (state.remoteVaultActive) {
+        for (const sym of state.visitedElements) {
+            const tempEl = elements.find(e => e.symbol === sym);
+            if (tempEl && tempEl.group === 18 && nobleCapacities[sym]) {
+                cap += nobleCapacities[sym][res];
+            }
+        }
+    } else {
+        cap = nobleCapacities[el.symbol][res];
+    }
+    const current = state.banks[el.symbol][res];
+
+    let amt = rawAmt;
+    const remainingSpace = cap - current;
+
+    if (remainingSpace <= 0) {
+        showNotification(`Vault is already full of ${res}!`);
+        return;
+    }
+    amt = Math.min(amt, remainingSpace);
+
+    if (res === 'electrons') {
+        if (state.inventory.electrons < amt) {
+            showNotification("Not enough resources to store!");
+            return;
+        }
+        amt = Math.min(amt, state.inventory.electrons);
+        state.inventory.electrons -= amt;
+        state.banks[el.symbol].electrons += amt;
+    } else if (res === 'energy') {
+        if (state.energy < amt) {
+            showNotification("Not enough resources to store!");
+            return;
+        }
+        amt = Math.min(amt, state.energy);
+        state.energy -= amt;
+        state.banks[el.symbol].energy += amt;
+    }
+
+    updateHUD();
+    openNucleusMenu();
+});
+
+document.getElementById('btn-bank-withdraw').addEventListener('click', () => {
+    const el = state.remoteVaultActive ? { symbol: 'REMOTE' } : state.currentElement;
+    const res = bankResource.value;
+    const rawAmt = parseInt(bankAmount.value) || 0;
+    if (rawAmt <= 0) return;
+
+    // Automatically limit amount to what can actually fit
+    let amt = rawAmt;
+    if (res === 'energy') {
+        const capacitySpace = state.maxEnergy - state.energy;
+        if (state.energy >= state.maxEnergy) {
+            showNotification("Energy is already at maximum capacity!");
+            return;
+        }
+        amt = Math.min(amt, capacitySpace);
+    } else if (res === 'electrons') {
+        const maxElectrons = storageUpgrades[state.upgrades.storageCapacity].electrons;
+        const capacitySpace = maxElectrons - state.inventory.electrons;
+        if (state.inventory.electrons >= maxElectrons) {
+            showNotification("Electron hotbar is already full!");
+            return;
+        }
+        amt = Math.min(amt, capacitySpace);
+    }
+
+    let val = (res === 'electrons') ? state.banks[el.symbol].electrons : state.banks[el.symbol].energy;
+
+    if (val < amt) {
+        showNotification("Not enough resources in vault to withdraw that amount!");
+        return;
+    }
+
+    if (state.remoteVaultActive) {
+        let remainingToDeduct = amt;
+        for (const sym of state.visitedElements) {
+            if (remainingToDeduct <= 0) break;
+            const tempEl = elements.find(e => e.symbol === sym);
+            if (tempEl && tempEl.group === 18 && state.banks[sym]) {
+                const available = state.banks[sym][res];
+                const deduct = Math.min(available, remainingToDeduct);
+                state.banks[sym][res] -= deduct;
+                remainingToDeduct -= deduct;
+            }
+        }
+        state.banks['REMOTE'][res] -= amt;
+    } else {
+        if (res === 'electrons') {
+            state.banks[el.symbol].electrons -= amt;
+        } else if (res === 'energy') {
+            state.banks[el.symbol].energy -= amt;
+        }
+    }
+
+    if (res === 'electrons') {
+        state.inventory.electrons += amt;
+    } else if (res === 'energy') {
+        state.energy += amt;
+    }
+
+    updateHUD();
+    openNucleusMenu();
+});
+
+// --- Keyboard Logic ---
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'm' || e.key === 'M') {
+        if (state.mapOpen) {
+            closeMap();
+        } else {
+            if (state.inventoryOpen) {
+                closeInventoryMenu();
+            }
+            openMap();
+        }
+        return;
+    }
+
+    if (e.key === 'r' || e.key === 'R') {
+        if (state.canReset) {
+            const hydrogen = elements.find(el => el.symbol === 'H');
+            state.currentElement = hydrogen;
+            state.localX = Math.floor(hydrogen.gridSize / 2);
+            state.localY = Math.floor(hydrogen.gridSize / 2);
+            state.energy = 100;
+            state.inventory.electrons = 0;
+            state.canReset = false;
+            updateHUD();
+            processSurvival();
+            showNotification("Respawned at Hydrogen!", 'success');
+        }
+        return;
+    }
+
+    if (minigameState.active) {
+        if (e.key === 'Escape') {
+            minigameState.active = false;
+            minigameOverlay.style.display = 'none';
+            state.menuOpen = false;
+            promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+        } else if (e.key === 'Enter' && minigameState.round >= minigameState.totalSlots) {
+            document.getElementById('btn-collect-energy').click();
+        }
+        return; // Block all movement during minigame
+    }
+
+    // Playtest cheat key: Q grants 1000 energy
+    if (DEV_MODE && (e.key === 'q' || e.key === 'Q')) {
+        state.energy += 100000;
+        state.totalEnergyEarned += 100000;
+        updateHUD();
+        // Refresh open menus to reflect new energy
+        if (state.menuOpen) {
+            openNucleusMenu();
+        }
+        if (craftingOverlay && craftingOverlay.style.display === 'flex') {
+            openCraftingMenu();
+        }
+        return;
+    }
+
+    // Playtest cheat key: Z grants shards ignoring capacity
+    if (DEV_MODE && (e.key === 'z' || e.key === 'Z')) {
+        state.inventory.shards.s++;
+        state.inventory.shards.p++;
+        state.inventory.shards.d++;
+        state.inventory.shards.f++;
+        state.inventory.catalyticOres++;
+        state.inventory.electrons += 5;
+        state.totalElectronsEarned += 5;
+        updateHUD();
+        if (state.menuOpen) {
+            openNucleusMenu();
+        }
+        if (state.inventoryOpen) {
+            openInventoryMenu();
+        }
+        if (craftingOverlay && craftingOverlay.style.display === 'flex') {
+            openCraftingMenu();
+        }
+        return;
+    }
+
+    // Handle E key for inventory closing/opening first
+    if (e.key === 'e' || e.key === 'E') {
+        if (state.inventoryOpen) {
+            closeInventoryMenu();
+        } else {
+            if (state.mapOpen) {
+                closeMap();
+            }
+            if (!state.menuOpen && !minigameState.active && !(craftingOverlay && craftingOverlay.style.display === 'flex')) {
+                openInventoryMenu();
+            }
+        }
+        return;
+    }
+
+    if (state.menuOpen || state.inventoryOpen || state.mapOpen || (craftingOverlay && craftingOverlay.style.display === 'flex')) {
+        if (e.key === 'Escape') {
+            if (state.mapOpen) {
+                closeMap();
+            } else if (state.inventoryOpen) {
+                closeInventoryMenu();
+            } else if (craftingOverlay && craftingOverlay.style.display === 'flex') {
+                craftingOverlay.style.display = 'none';
+                menuOverlay.style.display = 'flex'; // Go back to nucleus menu
+            } else if (state.menuOpen) {
+                closeNucleusMenu();
+            }
+        }
+        return; // Block movement
+    }
+
+    if ((e.key === 'n' || e.key === 'N') && state.upgrades.octetRemote) {
+        state.remoteVaultActive = true;
+        openNucleusMenu();
+        return;
+    }
+
+    if ((e.key === 'h' || e.key === 'H') && state.upgrades.hDrive) {
+        promptAction('TELEPORT_H', {}, "Press ENTER to Teleport to Hydrogen");
+        return;
+    }
+
+    const centerIdx = Math.floor(state.currentElement.gridSize / 2);
+    if (e.key === 'Enter') {
+        if (state.pendingAction) {
+            executeAction();
+            return;
+        } else if (state.localX === centerIdx && state.localY === centerIdx) {
+            openNucleusMenu();
+            return;
+        }
+    }
+
+    let dx = 0, dy = 0;
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === 'i' || e.key === 'I') dy = -1;
+    else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S' || e.key === 'k' || e.key === 'K') dy = 1;
+    else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A' || e.key === 'j' || e.key === 'J') dx = -1;
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D' || e.key === 'l' || e.key === 'L') dx = 1;
+
+    if (dx !== 0 || dy !== 0) {
+        e.preventDefault();
+        tryMove(dx, dy);
+    }
+});
+
+function getNearestElementFrom(sourceElement, dx, dy) {
+    const currentX = sourceElement.xpos;
+    const currentY = sourceElement.ypos;
+
+    let candidates = elements.filter(e => {
+        if (dx > 0) return e.xpos > currentX && e.ypos === currentY;
+        if (dx < 0) return e.xpos < currentX && e.ypos === currentY;
+        if (dy > 0) return e.ypos > currentY && e.xpos === currentX;
+        if (dy < 0) return e.ypos < currentY && e.xpos === currentX;
+        return false;
+    });
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => {
+        return (Math.abs(a.xpos - currentX) + Math.abs(a.ypos - currentY)) -
+            (Math.abs(b.xpos - currentX) + Math.abs(b.ypos - currentY));
+    });
+
+    return candidates[0];
+}
+
+function tryMove(dx, dy) {
+    const el = state.currentElement;
+    let newX = state.localX + dx;
+    let newY = state.localY + dy;
+
+    const centerIdx = Math.floor(el.gridSize / 2);
+
+    if (newX < 0 || newX >= el.gridSize || newY < 0 || newY >= el.gridSize) {
+        if (dx !== 0 && state.localY !== centerIdx) return;
+        if (dy !== 0 && state.localX !== centerIdx) return;
+
+        const target = getNearestElementFrom(el, dx, dy);
+        if (!target) return;
+
+        if (el.group === 2 && dx === 1 && target.group >= 3 && target.group <= 12) {
+            return;
+        }
+        if (el.group === 3 && dx === -1 && target.group === 2) {
+            return;
+        }
+
+        // Block paths between transition metals (y<=7) and f-block rows (y>=9)
+        // Exception: Ac → Ce
+        if (el.ypos <= 7 && target.ypos >= 9 && !(el.symbol === 'Ac' && target.symbol === 'Ce')) {
+            return;
+        }
+        if (el.ypos >= 9 && target.ypos <= 7 && !(el.symbol === 'Ce' && target.symbol === 'Ac')) {
+            return;
+        }
+
+        // Ac → Ce bridge costs 20 electrons
+        if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
+            const bridgeKey = el.symbol + '-' + target.symbol;
+            if (!state.bridges.has(bridgeKey)) {
+                let enterX = Math.floor(target.gridSize / 2);
+                let enterY = Math.floor(target.gridSize / 2);
+                if (dx > 0) { enterX = 0; enterY = Math.floor(target.gridSize / 2); }
+                if (dx < 0) { enterX = target.gridSize - 1; enterY = Math.floor(target.gridSize / 2); }
+                if (dy > 0) { enterY = 0; enterX = Math.floor(target.gridSize / 2); }
+                if (dy < 0) { enterY = target.gridSize - 1; enterX = Math.floor(target.gridSize / 2); }
+                clearAction();
+                promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'f-Block Descent', key: bridgeKey, cost: 20, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to Descend into the f-block! (-20 Electrons)`);
+                return;
+            }
+        }
+
+        if (el.group === 18 && dy !== 0) {
+            return;
+        }
+        if (el.group === 18 && dx === 1) {
+            return; // World boundary right
+        }
+
+        let enterX = centerIdx;
+        let enterY = centerIdx;
+        if (dx > 0) { enterX = 0; enterY = Math.floor(target.gridSize / 2); }
+        if (dx < 0) { enterX = target.gridSize - 1; enterY = Math.floor(target.gridSize / 2); }
+        if (dy > 0) { enterY = 0; enterX = Math.floor(target.gridSize / 2); }
+        if (dy < 0) { enterY = target.gridSize - 1; enterX = Math.floor(target.gridSize / 2); }
+
+        const moveType = getMovementType(el, target);
+        const bridgeKey = el.symbol + '-' + target.symbol; // Unidirectional unlock
+
+        if (moveType === 'IONIC' && !state.bridges.has(bridgeKey)) {
+            clearAction();
+            const isFBlockBridge = el.isFBlock && target.isFBlock;
+            const cost = isFBlockBridge ? 6 : 5;
+            const type = isFBlockBridge ? 'F-Block Ionic Bridge' : 'Ionic Bridge';
+            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: cost, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to form an Ionic Bridge to ${target.symbol} (-${cost} Electrons)`);
+            return;
+        }
+
+        if (moveType === 'COVALENT' && !state.bridges.has(bridgeKey)) {
+            clearAction();
+            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 2, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to form a Covalent Bond to ${target.symbol} (-2 Electrons)`);
+            return;
+        }
+
+        clearAction();
+        commitInterElementMove(target, enterX, enterY);
+    } else {
+        clearAction();
+        commitLocalMove(newX, newY);
+    }
+}
+
+function getBaseMovementCost(element) {
+    if (element.isFBlock) return 3800;
+    switch (element.period) {
+        case 1: return 2;
+        case 2: return 10;
+        case 3: return 24;
+        case 4: return 60;
+        case 5: return 180;
+        case 6: return 530;
+        case 7: return 1200;
+        default: return 2;
+    }
+}
+
+function commitLocalMove(x, y) {
+    const el = state.currentElement;
+    const centerIdx = Math.floor(el.gridSize / 2);
+    const isNucleus = (x === centerIdx && y === centerIdx);
+
+    let baseAmount = getBaseMovementCost(el);
+    let cost = isNucleus ? 0 : baseAmount * (1 + 0.03 * el.atomicNumber);
+
+    if (state.upgrades.eBoots === 1) cost *= 0.6;
+    else if (state.upgrades.eBoots === 2) cost *= 0.3;
+    else if (state.upgrades.eBoots === 3) cost *= 0.1;
+    else if (state.upgrades.eBoots >= 4) cost *= 0.04;
+    cost = Math.floor(cost);
+
+    if (state.energy >= cost) {
+        state.energy -= cost;
+        state.localX = x;
+        state.localY = y;
+
+        updateHUD();
+        processSurvival();
+
+        if (isNucleus && !state.menuOpen) {
+            promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+        } else if (!isNucleus && state.pendingAction?.type === 'NUCLEUS_MENU') {
+            clearAction();
+        }
+
+        // Check for shard at new position
+        if (!isNucleus) {
+            const shard = getShardAt(el.symbol, x, y);
+            if (shard) {
+                const config = SHARD_CONFIG[shard.type];
+                const shardCaps = shardUpgrades[state.upgrades.shardCapacity];
+                const currentCount = state.inventory.shards[shard.type];
+                const maxCount = shardCaps[shard.type];
+
+                if (!state.upgrades[config.extractorKey]) {
+                    showRedMessage(`Craft the ${config.extractorName} to harvest ${shard.type.toUpperCase()}-Shards`);
+                } else if (currentCount >= maxCount) {
+                    showRedMessage(`You need more capacity to harvest this ${shard.type.toUpperCase()}-Shard`);
+                } else {
+                    const actualCost = getShardHarvestCost(shard.type);
+                    promptAction('HARVEST_SHARD', { shard }, `Press [ENTER] to harvest the ${shard.type.toUpperCase()}-Shard (-${actualCost} Energy)`);
+                }
+            }
+        }
+    } else {
+        showNotification("Insufficient Energy! Press [R] to respawn at H (lose all electrons)");
+        state.canReset = true;
+    }
+}
+
+function commitInterElementMove(targetElement, enterX, enterY) {
+    let baseAmount = getBaseMovementCost(targetElement);
+    let cost = baseAmount * (1 + 0.03 * targetElement.atomicNumber) * 3;
+
+    if (state.upgrades.eBoots === 1) cost *= 0.6;
+    else if (state.upgrades.eBoots === 2) cost *= 0.3;
+    else if (state.upgrades.eBoots === 3) cost *= 0.1;
+    else if (state.upgrades.eBoots >= 4) cost *= 0.04;
+    cost = Math.floor(cost);
+
+    if (state.energy >= cost) {
+        state.energy -= cost;
+        state.currentElement = targetElement;
+        state.localX = enterX;
+        state.localY = enterY;
+        state.visitedElements.add(targetElement.symbol);
+
+        updateHUD();
+        processSurvival();
+        checkWin(targetElement);
+    } else {
+        showNotification("Insufficient Energy to traverse the gap!");
+    }
+}
+
+
+function promptAction(type, payload, message) {
+    state.pendingAction = { type, payload };
+    actionPopup.innerText = message;
+    actionPopup.style.color = '#fff';
+    actionPopup.style.borderColor = 'var(--accent-cyan, #00ffcc)';
+    actionPopup.style.boxShadow = '0 0 20px var(--accent-cyan, #00ffcc)';
+    actionPopup.style.display = 'block';
+}
+
+function showRedMessage(message) {
+    state.pendingAction = null;
+    actionPopup.innerText = message;
+    actionPopup.style.color = '#ff6666';
+    actionPopup.style.borderColor = '#ff6666';
+    actionPopup.style.boxShadow = '0 0 20px #ff6666';
+    actionPopup.style.display = 'block';
+}
+
+function clearAction() {
+    state.pendingAction = null;
+    actionPopup.style.display = 'none';
+}
+
+function executeAction() {
+    const { type, payload } = state.pendingAction;
+
+    if (type === 'UNLOCK_BRIDGE') {
+        if (state.inventory.electrons >= payload.cost) {
+            state.inventory.electrons -= payload.cost;
+            // Bidirectional unlock
+            state.bridges.add(payload.source.symbol + '-' + payload.target.symbol);
+            state.bridges.add(payload.target.symbol + '-' + payload.source.symbol);
+
+            commitInterElementMove(payload.target, payload.enterX, payload.enterY);
+        } else {
+            showNotification(`Not enough Valence Electrons for ${payload.type}!`);
+        }
+    } else if (type === 'TELEPORT_H') {
+        const hydrogen = elements.find(e => e.symbol === 'H');
+        state.currentElement = hydrogen;
+        state.localX = Math.floor(hydrogen.gridSize / 2);
+        state.localY = Math.floor(hydrogen.gridSize / 2);
+        updateHUD();
+        processSurvival();
+    } else if (type === 'HARVEST_SHARD') {
+        collectShard(payload.shard);
+    } else if (type === 'NUCLEUS_MENU') {
+        openNucleusMenu();
+        return; // Important: do not call clearAction here since openNucleusMenu handles its own flow
+    }
+
+    clearAction();
+}
+
+function processSurvival() {
+    let radDrain = calculateRadiationDrain(state.currentElement);
+    if (state.upgrades.shieldingSuit) radDrain *= 0.4;
+    state.radiation = Math.min(100, state.radiation + radDrain);
+
+    if (state.radiation > 20) {
+        state.energy -= (state.radiation / 10);
+    }
+
+    state.energy = Math.max(0, state.energy);
+    updateHUD();
+}
+
+function checkWin(target) {
+    if (target.symbol === 'Lr' && !state.won) {
+        state.won = true;
+
+        winStatEnergy.innerText = Math.round(state.totalEnergyEarned).toLocaleString();
+        winStatElectrons.innerText = state.totalElectronsEarned.toLocaleString();
+        winStatElements.innerText = state.visitedElements.size;
+        winStatTop5.innerText = state.top5Placements;
+        setTimeout(() => { winOverlay.style.display = 'flex'; }, 500);
+    }
+}
+
+if (btnWinContinue) {
+    btnWinContinue.addEventListener('click', () => {
+        winOverlay.style.display = 'none';
+    });
+}
+
+function updateHUD() {
+    const storageCaps = storageUpgrades[state.upgrades.storageCapacity];
+    state.maxEnergy = storageCaps.energy;
+
+    if (state.energy >= 2) {
+        state.canReset = false;
+    }
+
+    const energyPct = Math.max(0, (state.energy / state.maxEnergy) * 100);
+    energyFill.style.width = `${energyPct}%`;
+    energyVal.innerText = `${Math.round(state.energy)}/${state.maxEnergy}`;
+
+    radFill.style.width = `${state.radiation}%`;
+    radVal.innerText = `${Math.round(state.radiation)}%`;
+
+    electronCount.innerText = state.inventory.electrons;
+    electronMax.innerText = `/${storageCaps.electrons}`;
+
+    // Show upgrade prompts if active
+    const hDrivePrompt = document.getElementById('h-drive-prompt');
+    if (hDrivePrompt) hDrivePrompt.style.display = state.upgrades.hDrive ? 'block' : 'none';
+
+    const remoteVaultPrompt = document.getElementById('remote-vault-prompt');
+    if (remoteVaultPrompt) remoteVaultPrompt.style.display = state.upgrades.octetRemote ? 'block' : 'none';
+}
+
+function openInventoryMenu() {
+    state.inventoryOpen = true;
+
+    // Populate Shards
+    const shardCaps = shardUpgrades[state.upgrades.shardCapacity];
+    invSShards.innerText = state.inventory.shards.s;
+    capSShards.innerText = shardCaps.s;
+    invPShards.innerText = state.inventory.shards.p;
+    capPShards.innerText = shardCaps.p;
+    invDShards.innerText = state.inventory.shards.d;
+    capDShards.innerText = shardCaps.d;
+    invFShards.innerText = state.inventory.shards.f;
+    capFShards.innerText = shardCaps.f;
+
+    // Populate Ores
+    invCatalytic.innerText = state.inventory.catalyticOres;
+
+    inventoryOverlay.style.display = 'flex';
+}
+
+function closeInventoryMenu() {
+    state.inventoryOpen = false;
+    inventoryOverlay.style.display = 'none';
+}
+
+if (btnCloseInventory) {
+    btnCloseInventory.addEventListener('click', closeInventoryMenu);
+}
+
+// --- Crafting Functions ---
+function openCraftingMenu() {
+    const el = state.currentElement;
+    const availableCrafts = craftableItems.filter(item => item.locations.includes(el.symbol));
+
+    craftingList.innerHTML = '';
+
+    availableCrafts.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'crafting-card';
+
+        // Determine requirements
+        const reqs = [];
+        let canAfford = true;
+
+        if (item.cost.energy > 0) {
+            const ok = state.energy >= item.cost.energy;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}">⚡ ${item.cost.energy}</span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.electrons > 0) {
+            const ok = state.inventory.electrons >= item.cost.electrons;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}">⚛️ ${item.cost.electrons}</span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.catalyticOres > 0) {
+            const ok = state.inventory.catalyticOres >= item.cost.catalyticOres;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}">💎 ${item.cost.catalyticOres} </span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.shards.s > 0) {
+            const ok = state.inventory.shards.s >= item.cost.shards.s;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}"><span class="shard-indicator s-indicator"></span> x${item.cost.shards.s}</span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.shards.p > 0) {
+            const ok = state.inventory.shards.p >= item.cost.shards.p;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}"><span class="shard-indicator p-indicator"></span> x${item.cost.shards.p}</span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.shards.d > 0) {
+            const ok = state.inventory.shards.d >= item.cost.shards.d;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}"><span class="shard-indicator d-indicator"></span> x${item.cost.shards.d}</span>`);
+            if (!ok) canAfford = false;
+        }
+        if (item.cost.shards.f > 0) {
+            const ok = state.inventory.shards.f >= item.cost.shards.f;
+            reqs.push(`<span class="cost-item ${!ok ? 'insufficient' : ''}"><span class="shard-indicator f-indicator"></span> x${item.cost.shards.f}</span>`);
+            if (!ok) canAfford = false;
+        }
+
+        // Generic "Acquired" check: try calling onCraft — if it returns false, the upgrade has already been applied
+        let isAcquired = !item.onCraft({ upgrades: { ...state.upgrades }, inventory: { ...state.inventory } });
+
+        card.innerHTML = `
+            <div class="crafting-info">
+                <div class="crafting-title">${item.name}</div>
+                <div class="crafting-desc">${item.description}</div>
+                <div class="crafting-cost">${reqs.join('')}</div>
+            </div>
+            <div class="crafting-action">
+                <button class="btn btn-primary btn-craft-item" ${(!canAfford || isAcquired) ? 'disabled style="opacity:0.5;"' : ''}>
+                    ${isAcquired ? 'Acquired' : 'Craft'}
+                </button>
+            </div>
+        `;
+
+        const craftBtn = card.querySelector('.btn-craft-item');
+        craftBtn.addEventListener('click', () => {
+            if (!canAfford || isAcquired) return;
+
+            // Deduct
+            state.energy -= item.cost.energy;
+            state.inventory.electrons -= item.cost.electrons;
+            state.inventory.catalyticOres -= item.cost.catalyticOres;
+            state.inventory.shards.s -= item.cost.shards.s;
+            state.inventory.shards.p -= item.cost.shards.p;
+            state.inventory.shards.d -= item.cost.shards.d;
+            state.inventory.shards.f -= item.cost.shards.f;
+
+            // Apply effect
+            const success = item.onCraft(state);
+
+            if (success) {
+                updateHUD();
+                openCraftingMenu(); // Re-render menu
+            }
+        });
+
+        craftingList.appendChild(card);
+    });
+
+    menuOverlay.style.display = 'none'; // Hide nucleus menu
+    craftingOverlay.style.display = 'flex';
+}
+
+if (btnCraft) {
+    btnCraft.addEventListener('click', openCraftingMenu);
+}
+if (btnCloseCrafting) {
+    btnCloseCrafting.addEventListener('click', () => {
+        craftingOverlay.style.display = 'none';
+        menuOverlay.style.display = 'flex'; // Go back to nucleus menu
+    });
+}
+
+
+// --- Map Functions ---
+function openMap() {
+    state.mapOpen = true;
+    mapOverlay.style.display = 'flex';
+    const pesKeyItem = document.getElementById('pes-key-item');
+    if (pesKeyItem) {
+        pesKeyItem.style.display = state.upgrades.pesScanner ? 'block' : 'none';
+    }
+    const protonKeyItem = document.getElementById('proton-key-item');
+    if (protonKeyItem) {
+        protonKeyItem.style.display = state.upgrades.protonScanner ? 'block' : 'none';
+    }
+    const shardKeyItem = document.getElementById('shard-key-item');
+    if (shardKeyItem) {
+        shardKeyItem.style.display = state.upgrades.shardTracker ? 'block' : 'none';
+    }
+    renderMap();
+}
+
+function closeMap() {
+    state.mapOpen = false;
+    mapOverlay.style.display = 'none';
+}
+
+function renderMap() {
+    mapGrid.innerHTML = '';
+
+    let pesHighlights = new Set();
+    if (state.upgrades.pesScanner) {
+        const nextStorage = craftableItems.find(item => item.id.startsWith('upgrade_storage_') && parseInt(item.id.split('_')[2]) === state.upgrades.storageCapacity + 1);
+        if (nextStorage) nextStorage.locations.forEach(loc => pesHighlights.add(loc));
+
+        const nextShard = craftableItems.find(item => item.id.startsWith('upgrade_shard_') && parseInt(item.id.split('_')[2]) === state.upgrades.shardCapacity + 1);
+        if (nextShard) nextShard.locations.forEach(loc => pesHighlights.add(loc));
+    }
+
+    let protonHighlights = new Set();
+    if (state.upgrades.protonScanner) {
+        const nextBooster = craftableItems.find(item => item.id.startsWith('e_booster_') && parseInt(item.id.split('_')[2]) === state.upgrades.energyBooster + 1);
+        if (nextBooster) nextBooster.locations.forEach(loc => protonHighlights.add(loc));
+    }
+
+    let shardHighlights = new Set();
+    if (state.upgrades.shardTracker) {
+        state.shardSpawns.forEach(shard => {
+            shardHighlights.add(shard.elementSymbol);
+        });
+    }
+
+    // Build a 22x11 grid (xpos 1-22, ypos 1-11)
+    // Rows 8-9 are gap rows between main table and f-block
+    for (let y = 1; y <= 11; y++) {
+        for (let x = 1; x <= 22; x++) {
+            const el = elements.find(e => e.xpos === x && e.ypos === y);
+            const cell = document.createElement('div');
+            cell.className = 'map-cell';
+
+            if (y === 8 || y === 9) {
+                // Gap rows
+                cell.classList.add('empty');
+                mapGrid.appendChild(cell);
+                continue;
+            }
+
+            if (!el) {
+                cell.classList.add('empty');
+                mapGrid.appendChild(cell);
+                continue;
+            }
+
+            const isCurrent = el.symbol === state.currentElement.symbol;
+            const isVisited = state.visitedElements.has(el.symbol);
+
+            cell.classList.add(isCurrent ? 'current' : (isVisited ? 'visited' : 'unvisited'));
+            cell.style.color = getElementColor(el);
+            cell.style.borderColor = isCurrent ? '#fff' : (isVisited ? getElementColor(el) + '80' : 'rgba(255,255,255,0.08)');
+            if (isVisited || isCurrent) {
+                cell.style.background = getElementColor(el) + '33'; // 20% opacity hex
+            }
+            if (el.symbol === 'Lr') {
+                cell.classList.add('win-pad');
+            }
+            if (pesHighlights.has(el.symbol)) {
+                cell.classList.add('pes-highlight');
+            }
+            if (protonHighlights.has(el.symbol)) {
+                cell.classList.add('proton-highlight');
+            }
+            if (shardHighlights.has(el.symbol)) {
+                cell.classList.add('shard-highlight');
+            }
+
+            cell.innerHTML = `<span class="map-number">${el.atomicNumber}</span>${el.symbol}`;
+            cell.title = `${el.atomicNumber} - ${el.name}`;
+
+            mapGrid.appendChild(cell);
+        }
+    }
+}
+
+if (btnCloseMap) {
+    btnCloseMap.addEventListener('click', closeMap);
+}
+
+// ============================
+// SHARD SPAWNING SYSTEM
+// ============================
+const SHARD_CONFIG = {
+    s: {
+        elements: ['Li', 'Be', 'Mg', 'Na', 'K', 'Ca'],
+        maxActive: 2,
+        harvestCost: 1000,
+        extractorKey: 'sExtractor',
+        extractorName: 'S-Shard Extractor'
+    },
+    p: {
+        // Rectangle from B(xpos=15,ypos=2) to I(xpos=19,ypos=5) and including F(xpos=19,ypos=2), In(xpos=15,ypos=5)
+        elements: [], // Populated dynamically below
+        maxActive: 3,
+        harvestCost: 4000,
+        extractorKey: 'pExtractor',
+        extractorName: 'P-Shard Extractor'
+    },
+    d: {
+        // D-block: groups 3-12, periods 4-6 (ypos 4-6)
+        elements: [],
+        maxActive: 3,
+        harvestCost: 11000,
+        extractorKey: 'dExtractor',
+        extractorName: 'D-Shard Extractor'
+    },
+    f: {
+        elements: ['Ce', 'Pr', 'Th', 'Pa'],
+        maxActive: 1,
+        harvestCost: 23000,
+        extractorKey: 'fExtractor',
+        extractorName: 'F-Shard Extractor'
+    }
+};
+
+// Populate P-block elements: xpos 15-19, ypos 2-5
+elements.forEach(el => {
+    if (el.xpos >= 15 && el.xpos <= 19 && el.ypos >= 2 && el.ypos <= 5) {
+        SHARD_CONFIG.p.elements.push(el.symbol);
+    }
+});
+
+// Populate D-block elements: groups 3-12, periods 4-6 (NOT period 7)
+elements.forEach(el => {
+    if (el.group >= 3 && el.group <= 12 && el.ypos >= 4 && el.ypos <= 6) {
+        SHARD_CONFIG.d.elements.push(el.symbol);
+    }
+});
+
+
+
+function getShardHarvestCost(type) {
+    let cost = SHARD_CONFIG[type].harvestCost;
+    if (state.upgrades.shardSaver) {
+        cost = Math.round(cost * 0.4); // 60% reduction
+    }
+    return cost;
+}
+
+function spawnShard(type) {
+    const config = SHARD_CONFIG[type];
+    const possibleElements = config.elements;
+    if (possibleElements.length === 0) return null;
+
+    const elSymbol = possibleElements[Math.floor(Math.random() * possibleElements.length)];
+    const el = elements.find(e => e.symbol === elSymbol);
+    if (!el) return null;
+
+    const centerIdx = Math.floor(el.gridSize / 2);
+    // Pick a random non-nucleus, non-connector cell
+    let x, y;
+    let isNucleus, isConnector;
+    do {
+        x = Math.floor(Math.random() * el.gridSize);
+        y = Math.floor(Math.random() * el.gridSize);
+        isNucleus = (x === centerIdx && y === centerIdx);
+        isConnector = (x === centerIdx && (y === 0 || y === el.gridSize - 1)) ||
+            (y === centerIdx && (x === 0 || x === el.gridSize - 1));
+    } while (isNucleus || isConnector);
+
+    return { type, elementSymbol: elSymbol, x, y };
+}
+
+function initShards() {
+    state.shardSpawns = [];
+    for (const type of ['s', 'p', 'd', 'f']) {
+        const config = SHARD_CONFIG[type];
+        for (let i = 0; i < config.maxActive; i++) {
+            const shard = spawnShard(type);
+            if (shard) state.shardSpawns.push(shard);
+        }
+    }
+}
+
+function respawnShard(type) {
+    const shard = spawnShard(type);
+    if (shard) state.shardSpawns.push(shard);
+}
+
+function getShardAt(elementSymbol, x, y) {
+    return state.shardSpawns.find(s => s.elementSymbol === elementSymbol && s.x === x && s.y === y) || null;
+}
+
+function collectShard(shard) {
+    const config = SHARD_CONFIG[shard.type];
+    const shardCaps = shardUpgrades[state.upgrades.shardCapacity];
+    const currentCount = state.inventory.shards[shard.type];
+    const maxCount = shardCaps[shard.type];
+
+    if (currentCount >= maxCount) {
+        showNotification(`${shard.type.toUpperCase()}-Shard inventory is full!`);
+        return;
+    }
+
+    const actualCost = getShardHarvestCost(shard.type);
+
+    if (state.energy < actualCost) {
+        showNotification(`Not enough energy! Need ${actualCost} to harvest.`);
+        return;
+    }
+
+    state.energy -= actualCost;
+    state.inventory.shards[shard.type]++;
+    // Remove from spawns
+    const idx = state.shardSpawns.indexOf(shard);
+    if (idx !== -1) state.shardSpawns.splice(idx, 1);
+    // Respawn a new one
+    respawnShard(shard.type);
+    updateHUD();
+    showNotification(`Harvested ${shard.type.toUpperCase()}-Shard!`, 'success');
+}
+
+// --- Init ---
+initShards();
+updateHUD();
+renderLoop();
+// Player starts on Hydrogen's nucleus
+promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");

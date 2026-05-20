@@ -1,0 +1,107 @@
+const fs = require('fs');
+
+const radii = {
+"helium": 31,
+"neon": 38,
+"fluorine": 42,
+"oxygen": 48,
+"hydrogen": 53,
+"nitrogen": 56,
+"carbon": 67,
+"argon": 71,
+"chlorine": 79,
+"boron": 87,
+"sulfur": 88,
+"krypton": 88,
+"bromine": 94,
+"phosphorus": 98,
+"selenium": 103,
+"xenon": 108,
+"silicon": 111,
+"beryllium": 112,
+"arsenic": 114,
+"iodine": 115,
+"aluminium": 118,
+"radon": 120,
+"tellurium": 123,
+"germanium": 125,
+"astatine": 127,
+"antimony": 133,
+"polonium": 135,
+"gallium": 136,
+"zinc": 142,
+"bismuth": 143,
+"magnesium": 145,
+"copper": 145,
+"tin": 145,
+"nickel": 149,
+"cobalt": 152,
+"lead": 154,
+"iron": 156,
+"indium": 156,
+"thallium": 156,
+"manganese": 161,
+"cadmium": 161,
+"silver": 165,
+"chromium": 166,
+"lithium": 167,
+"palladium": 169,
+"vanadium": 171,
+"mercury": 171,
+"rhodium": 173,
+"gold": 174,
+"titanium": 176,
+"platinum": 177,
+"ruthenium": 178,
+"iridium": 180,
+"technetium": 183,
+"scandium": 184,
+"osmium": 185,
+"rhenium": 188,
+"sodium": 190,
+"molybdenum": 190,
+"tungsten": 193,
+"calcium": 194,
+"niobium": 198,
+"tantalum": 200,
+"promethium": 205,
+"zirconium": 206,
+"neodymium": 206,
+"hafnium": 208,
+"cerium": 210,
+"yttrium": 212,
+"lutetium": 217,
+"strontium": 219,
+"thulium": 222,
+"ytterbium": 222,
+"terbium": 225,
+"holmium": 226,
+"erbium": 226,
+"lanthanum": 226,
+"dysprosium": 228,
+"europium": 231,
+"gadolinium": 233,
+"samarium": 238,
+"potassium": 243,
+"praseodymium": 247,
+"barium": 253,
+"rubidium": 265,
+"caesium": 298,
+"cesium": 298,
+"aluminum": 118
+};
+
+const dataPath = 'src/data/element_stats.json';
+let elements = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+
+let updated = 0;
+elements.forEach(el => {
+    let name = el.name.toLowerCase();
+    if (radii[name] !== undefined) {
+        el.atomicRadius = radii[name];
+        updated++;
+    }
+});
+
+fs.writeFileSync(dataPath, JSON.stringify(elements, null, 2));
+console.log(`Updated ${updated} elements.`);
