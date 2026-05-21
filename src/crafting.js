@@ -200,7 +200,7 @@ export const craftableItems = [
         id: "upgrade_storage_5",
         name: "Energy Capacity V",
         description: "Increases Max Energy to 55000 and Max Electrons to 30.",
-        locations: ["La", "Ac", "Rf"],
+        locations: ["La", "Ac"],
         cost: { energy: 20000, electrons: 10, shards: { s: 0, p: 0, d: 0, f: 0 }, catalyticOres: 0 },
         onCraft: (state) => {
             if (state.upgrades.storageCapacity < 5) {
@@ -353,7 +353,7 @@ export const craftableItems = [
     {
         id: "octet_remote",
         name: "Octet Remote",
-        description: "Allows access to discovered noble gas banks remotely.",
+        description: "Allows remote access to energy and electrons in Noble Gas Vaults.",
         locations: ["H"],
         cost: { energy: 10000, electrons: 4, shards: { s: 6, p: 2, d: 1, f: 0 }, catalyticOres: 2 },
         onCraft: (state) => {
@@ -410,7 +410,7 @@ export const craftableItems = [
         id: "f_extractor",
         name: "f-Shard Extractor",
         description: "Allows you to harvest f-Shards found in the F block",
-        locations: ["Bh"],
+        locations: ["Pt"],
         cost: { energy: 20000, electrons: 14, shards: { s: 10, p: 4, d: 2, f: 0 }, catalyticOres: 2 },
         onCraft: (state) => {
             if (!state.upgrades.fExtractor) {
@@ -421,17 +421,59 @@ export const craftableItems = [
         }
     },
     {
-        id: "shard_saver",
-        name: "Shard Saver",
-        description: "Reduces energy costs of all shard harvests by 60%",
-        locations: ["Se"],
-        cost: { energy: 14000, electrons: 3, shards: { s: 3, p: 2, d: 0, f: 0 }, catalyticOres: 1 },
+        id: "ionization_saver_1",
+        name: "Ionization Saver",
+        description: "Reduces energy costs of grabbing electrons by 60%",
+        locations: ["Pt"],
+        cost: { energy: 7500, electrons: 3, shards: { s: 4, p: 1, d: 0, f: 0 }, catalyticOres: 0 },
         onCraft: (state) => {
-            if (!state.upgrades.shardSaver) {
-                state.upgrades.shardSaver = true;
+            if ((state.upgrades.ionizationSaver || 0) < 1) {
+                state.upgrades.ionizationSaver = 1;
                 return true;
             }
             return false;
         }
-    }
+    },
+    {
+        id: "ionization_saver_2",
+        name: "Super Ionization Saver",
+        description: "Reduces energy costs of grabbing electrons by 90%",
+        locations: ["Rf"],
+        cost: { energy: 15000, electrons: 5, shards: { s: 1, p: 2, d: 1, f: 0 }, catalyticOres: 1 },
+        onCraft: (state) => {
+            if ((state.upgrades.ionizationSaver || 0) < 2) {
+                state.upgrades.ionizationSaver = 2;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "energy_router",
+        name: "Energy Router",
+        description: "Transfers excess energy to unlocked Noble Vaults when capacity is full",
+        locations: ["Re"],
+        cost: { energy: 12000, electrons: 0, shards: { s: 3, p: 2, d: 0, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (!state.upgrades.energyRouter) {
+                state.upgrades.energyRouter = true;
+                return true;
+            }
+            return false;
+        }
+    },
+    {
+        id: "electron_router",
+        name: "Electron Router",
+        description: "Transfers excess electrons to unlocked Noble Vaults when capacity is full",
+        locations: ["Tc"],
+        cost: { energy: 0, electrons: 6, shards: { s: 3, p: 2, d: 0, f: 0 }, catalyticOres: 2 },
+        onCraft: (state) => {
+            if (!state.upgrades.electronRouter) {
+                state.upgrades.electronRouter = true;
+                return true;
+            }
+            return false;
+        }
+    },
 ];

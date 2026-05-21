@@ -16,6 +16,9 @@ function getMovementType(source, target) {
     if (source.isFBlock && target.isFBlock) return 'IONIC';
     if (source.group === 2 && target.group >= 13) return 'IONIC';
     if (source.group >= 13 && target.group === 2) return 'IONIC';
+    // Noble gas connections require bridges
+    if (target.group === 18 && source.group !== 18) return 'NOBLE_BRIDGE';
+    if (source.group === 18 && target.group !== 18) return 'NOBLE_BRIDGE';
     if (COVALENT_GROUP.includes(source.symbol) && COVALENT_GROUP.includes(target.symbol)) return 'COVALENT';
     return 'NORMAL';
 }
@@ -108,7 +111,10 @@ const state = {
         pExtractor: false,
         dExtractor: false,
         fExtractor: false,
-        shardSaver: false
+        shardSaver: false,
+        ionizationSaver: 0,
+        energyRouter: false,
+        electronRouter: false
     },
     bridges: new Set(),
     visitedElements: new Set(['H']),
@@ -196,7 +202,7 @@ const capElectronsSpan = document.getElementById('cap-electrons');
 const capEnergySpan = document.getElementById('cap-energy');
 
 const nobleCapacities = {
-    'He': { electrons: 4, energy: 1000 },
+    'He': { electrons: 2, energy: 1000 },
     'Ne': { electrons: 4, energy: 3500 },
     'Ar': { electrons: 6, energy: 8000 },
     'Kr': { electrons: 8, energy: 17000 },
@@ -204,6 +210,61 @@ const nobleCapacities = {
     'Rn': { electrons: 16, energy: 100000 },
     'Og': { electrons: 24, energy: 300000 }
 };
+
+const nobleVaultBridgeCosts = {
+    'He': { cost: 0, requiredLevel: 0 },
+    'Ne': { cost: 2, requiredLevel: 1 },
+    'Ar': { cost: 6, requiredLevel: 2 },
+    'Kr': { cost: 12, requiredLevel: 3 },
+    'Xe': { cost: 18, requiredLevel: 4 },
+    'Rn': { cost: 26, requiredLevel: 5 },
+    'Og': { cost: 34, requiredLevel: 6 }
+};
+
+const nobleVaultOrder = ['He', 'Ne', 'Ar', 'Kr', 'Xe', 'Rn', 'Og'];
+
+function isNobleVaultUnlocked(nobleSymbol) {
+    for (const bridge of state.bridges) {
+        if (bridge.startsWith(nobleSymbol + '-') || bridge.endsWith('-' + nobleSymbol)) return true;
+    }
+    return false;
+}
+
+function routeOverflowEnergy(overflow) {
+    if (!state.upgrades.energyRouter || overflow <= 0) return 0;
+    let routed = 0;
+    for (const symbol of nobleVaultOrder) {
+        if (!isNobleVaultUnlocked(symbol)) continue;
+        if (!state.banks[symbol]) state.banks[symbol] = { electrons: 0, energy: 0 };
+        const cap = nobleCapacities[symbol].energy;
+        const space = cap - state.banks[symbol].energy;
+        if (space <= 0) continue;
+        const toDeposit = Math.min(overflow, space);
+        state.banks[symbol].energy += toDeposit;
+        overflow -= toDeposit;
+        routed += toDeposit;
+        if (overflow <= 0) break;
+    }
+    return routed;
+}
+
+function routeOverflowElectrons(overflow) {
+    if (!state.upgrades.electronRouter || overflow <= 0) return 0;
+    let routed = 0;
+    for (const symbol of nobleVaultOrder) {
+        if (!isNobleVaultUnlocked(symbol)) continue;
+        if (!state.banks[symbol]) state.banks[symbol] = { electrons: 0, energy: 0 };
+        const cap = nobleCapacities[symbol].electrons;
+        const space = cap - state.banks[symbol].electrons;
+        if (space <= 0) continue;
+        const toDeposit = Math.min(overflow, space);
+        state.banks[symbol].electrons += toDeposit;
+        overflow -= toDeposit;
+        routed += toDeposit;
+        if (overflow <= 0) break;
+    }
+    return routed;
+}
 
 // --- Camera & Render Loop ---
 const camera = { x: state.currentElement.xpos * GLOBAL_STEP, y: state.currentElement.ypos * GLOBAL_STEP, scale: 0.8 };
@@ -269,12 +330,15 @@ function renderLoop() {
             // Block paths between transition metals (y<=7) and f-block rows (y>=9)
             if (el.ypos <= 7 && target.ypos >= 9) valid = false;
             if (el.ypos >= 9 && target.ypos <= 7) valid = false;
-            // Exception: Ac → Ce path
+            // Exception: Ac → Ce path (treated as a bridge)
+            let isAcCe = false;
             if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
                 valid = true;
+                isAcCe = true;
             }
 
             let moveType = getMovementType(el, target);
+            if (isAcCe) moveType = 'F_DESCENT';
 
             if (!valid) return;
 
@@ -288,6 +352,8 @@ function renderLoop() {
                 drawLine = true;
                 if (moveType === 'IONIC') lineColor = 'rgba(200, 100, 255, 0.8)'; // Purple
                 else if (moveType === 'COVALENT') lineColor = 'rgba(100, 200, 255, 0.8)'; // Blue
+                else if (moveType === 'NOBLE_BRIDGE') lineColor = 'rgba(255, 215, 0, 0.8)'; // Gold
+                else if (moveType === 'F_DESCENT') lineColor = 'rgba(100, 200, 255, 0.8)'; // Cyan
             }
 
             if (drawLine) {
@@ -394,11 +460,15 @@ function renderLoop() {
                             // Block paths between transition metals (y<=7) and f-block rows (y>=9)
                             if (el.ypos <= 7 && target.ypos >= 9) valid = false;
                             if (el.ypos >= 9 && target.ypos <= 7) valid = false;
-                            // Exception: Ac → Ce path
+                            // Exception: Ac → Ce path (treated as a bridge)
                             if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
                                 valid = true;
                             }
                             moveType = getMovementType(el, target);
+                            // Override for Ac-Ce
+                            if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
+                                moveType = 'F_DESCENT';
+                            }
                         }
 
 
@@ -406,6 +476,8 @@ function renderLoop() {
                             isExit = true;
                             if (moveType === 'IONIC') exitColor = 'rgba(200, 100, 255, 1)';
                             else if (moveType === 'COVALENT') exitColor = 'rgba(100, 200, 255, 1)';
+                            else if (moveType === 'NOBLE_BRIDGE') exitColor = 'rgba(255, 215, 0, 1)'; // Gold
+                            else if (moveType === 'F_DESCENT') exitColor = 'rgba(100, 200, 255, 1)'; // Cyan
                             else exitColor = 'rgba(100, 255, 100, 1)'; // Normal Green
                         }
                     }
@@ -530,22 +602,41 @@ function openNucleusMenu() {
         const debt = state.elementDebts[el.symbol] || 0;
         const giveCount = state.elementGiveCount[el.symbol] || 0;
 
-        // 200x first ionization energy, multiplied by 1.2 for each prior grab
-        const baseCost = el.firstIonizationEnergy ? Math.round(el.firstIonizationEnergy * 200) : 2000;
-        const currentCost = Math.round(baseCost * Math.pow(1.2, debt));
+        // 120x first ionization energy, multiplied by 1.5 for each prior grab (ionization saver applied)
+        let baseCost = (el.firstIonizationEnergy && !el.isFBlock) ? Math.round(el.firstIonizationEnergy * 120) : null;
+        if (baseCost !== null) {
+            if (state.upgrades.ionizationSaver === 1) baseCost = Math.round(baseCost * 0.4);
+            else if (state.upgrades.ionizationSaver >= 2) baseCost = Math.round(baseCost * 0.1);
+        }
+        const currentCost = baseCost !== null ? Math.round(baseCost * Math.pow(1.5, debt)) : null;
 
-        // 2000x electron affinity, multiplied by 0.8 for each prior give
-        const baseGain = Math.round(2000 * (el.electronAffinity || 0));
-        const gain = Math.round(baseGain * Math.pow(0.8, giveCount));
+        // 2.3^(electron affinity) * 600, multiplied by 0.8 for each prior give (unavailable if electronAffinity is 0)
+        const baseGain = el.electronAffinity ? Math.pow(2.3, el.electronAffinity) * 600 : null;
+        const gain = baseGain !== null ? Math.round(baseGain * Math.pow(0.8, giveCount)) : null;
 
         const electronsRemaining = el.atomicNumber - debt + giveCount;
 
-        costSpan.innerText = currentCost;
-        gainSpan.innerText = gain;
+        if (currentCost !== null) {
+            costSpan.innerText = currentCost;
+        } else {
+            costSpan.innerText = 'N/A';
+        }
+
+        if (gain !== null) {
+            gainSpan.innerText = gain;
+        } else {
+            gainSpan.innerText = 'UNAVAILABLE';
+        }
+
         if (grabRemainingSpan) grabRemainingSpan.innerText = electronsRemaining;
 
         const grabBtn = document.getElementById('btn-grab-electron');
-        if (electronsRemaining <= 0) {
+        if (baseCost === null) {
+            grabBtn.classList.add('disabled');
+            grabBtn.disabled = true;
+            grabBtn.style.opacity = '0.5';
+            costSpan.innerText = 'UNAVAILABLE';
+        } else if (electronsRemaining <= 0) {
             grabBtn.classList.add('disabled');
             grabBtn.disabled = true;
             grabBtn.style.opacity = '0.5';
@@ -557,7 +648,12 @@ function openNucleusMenu() {
         }
 
         const giveBtn = document.getElementById('btn-give-electron');
-        if (state.inventory.electrons <= 0 || gain <= 0) {
+        if (gain === null) {
+            giveBtn.classList.add('disabled');
+            giveBtn.disabled = true;
+            giveBtn.style.opacity = '0.5';
+            gainSpan.innerText = 'UNAVAILABLE';
+        } else if (state.inventory.electrons <= 0) {
             giveBtn.classList.add('disabled');
             giveBtn.disabled = true;
             giveBtn.style.opacity = '0.5';
@@ -748,11 +844,14 @@ function getGridColumns(totalSlots) {
 // Calculate live energy from running total rank
 function calcMinigameEnergy(totalRank) {
     const protons = minigameState.nucleusElement.atomicNumber;
-    const baseEnergy = Math.pow(0.986, totalRank - 34) * Math.pow(1.05, protons + 5) * 1200;
+    const baseEnergy = Math.pow(0.986, totalRank - 34) * Math.pow(1.05, protons + 6) * 1700;
     const boosterLvl = state.upgrades.energyBooster || 0;
     const boosterMultipliers = { 0: 1, 1: 1.5, 2: 2, 3: 3, 4: 4.5, 5: 8 };
     const mult = boosterMultipliers[boosterLvl] || 1;
-    return Math.round(baseEnergy * mult);
+    let energy = Math.round(baseEnergy * mult);
+    // F-block energy nerf: earn 6x less energy
+    if (state.currentElement.isFBlock) energy = Math.round(energy / 6);
+    return energy;
 }
 
 // Update the collect button text and state
@@ -819,6 +918,47 @@ function showRankNotification(el, rank, bestSlot, bestRank, placedSlot) {
     notif.style.animation = 'notifFadeIn 0.3s ease';
 }
 
+function getMinigameElementPools() {
+    const nobleGases = elements.filter(el => el.group === 18);
+    const p2p3set = new Set(['H', 'Br', 'Ca', 'K', 'Fr', 'Ts', 'Ra', 'Mc', 'Ac', 'Lv']);
+    const p2p3 = elements.filter(el =>
+        ((el.period === 2 || el.period === 3 || p2p3set.has(el.symbol)) && el.group !== 18)
+    );
+    const dBlock = elements.filter(el => el.group >= 3 && el.group <= 12 && !el.isFBlock);
+    const fBlock = elements.filter(el => el.isFBlock);
+
+    const aboveSets = new Set([...nobleGases, ...p2p3, ...dBlock, ...fBlock]);
+    const everythingElse = elements.filter(el => !aboveSets.has(el));
+
+    return { nobleGases, p2p3, dBlock, fBlock, everythingElse };
+}
+
+function getRandomElementFromPool(pool, usedSet) {
+    const available = pool.filter(el => !usedSet.has(el.symbol));
+    if (available.length === 0) return null;
+    return available[Math.floor(Math.random() * available.length)];
+}
+
+function pickElementWithProbabilities(pools, usedSet) {
+    let r = Math.random();
+    let selectedPool = null;
+
+    if (r < 0.10) selectedPool = pools.nobleGases;
+    else if (r < 0.60) selectedPool = pools.p2p3;
+    else if (r < 0.75) selectedPool = pools.dBlock;
+    else if (r < 0.85) selectedPool = pools.fBlock;
+    else selectedPool = pools.everythingElse;
+
+    let el = getRandomElementFromPool(selectedPool, usedSet);
+    if (!el) {
+        const allAvailable = elements.filter(e => !usedSet.has(e.symbol));
+        if (allAvailable.length > 0) {
+            el = allAvailable[Math.floor(Math.random() * allAvailable.length)];
+        }
+    }
+    return el;
+}
+
 function startMinigame() {
     // Close the nucleus menu
     menuOverlay.style.display = 'none';
@@ -837,10 +977,27 @@ function startMinigame() {
     minigameState.runningTotalRank = 0;
     minigameState.pendingReward = 0;
 
-    // Pick N random distinct elements from the full list, plus backups for skipping
-    const shuffled = [...elements].sort(() => Math.random() - 0.5);
-    minigameState.dealtElements = shuffled.slice(0, config.totalSlots);
-    minigameState.backupElements = shuffled.slice(config.totalSlots);
+    // Pick N random distinct elements using configured probabilities, plus backups for skipping
+    const pools = getMinigameElementPools();
+    const usedSet = new Set();
+    minigameState.dealtElements = [];
+    minigameState.backupElements = [];
+
+    for (let i = 0; i < config.totalSlots; i++) {
+        let el = pickElementWithProbabilities(pools, usedSet);
+        if (el) {
+            usedSet.add(el.symbol);
+            minigameState.dealtElements.push(el);
+        }
+    }
+
+    for (let i = 0; i < 15; i++) {
+        let el = pickElementWithProbabilities(pools, usedSet);
+        if (el) {
+            usedSet.add(el.symbol);
+            minigameState.backupElements.push(el);
+        }
+    }
 
     // Dynamically build category buttons
     minigameCategoriesContainer.innerHTML = '';
@@ -896,6 +1053,7 @@ function dealNextElement() {
     const skipBtn = document.getElementById('btn-skip-element');
     skipBtn.disabled = true;
     skipBtn.style.opacity = '0.5';
+    skipBtn.innerText = `⏭ Skip (${minigameState.skipsRemaining} left)`;
 
     const card = document.getElementById('minigame-card');
     card.classList.remove('selected');
@@ -1046,8 +1204,18 @@ document.getElementById('btn-collect-energy').addEventListener('click', () => {
     if (minigameState.pendingReward) {
         const reward = minigameState.pendingReward;
         const before = state.energy;
-        state.energy = Math.min(state.maxEnergy, state.energy + reward);
-        state.totalEnergyEarned += (state.energy - before);
+
+        if (state.upgrades.energyRouter && state.energy + reward > state.maxEnergy) {
+            const spaceInMax = Math.max(0, state.maxEnergy - state.energy);
+            const overflow = reward - spaceInMax;
+            const routed = routeOverflowEnergy(overflow);
+            state.energy = Math.min(state.maxEnergy, state.energy + spaceInMax);
+            state.totalEnergyEarned += (state.energy - before) + routed;
+        } else {
+            state.energy = Math.min(state.maxEnergy, state.energy + reward);
+            state.totalEnergyEarned += (state.energy - before);
+        }
+
         minigameState.pendingReward = 0;
     }
 
@@ -1094,20 +1262,50 @@ document.getElementById('btn-harvest').addEventListener('click', () => {
 document.getElementById('btn-grab-electron').addEventListener('click', () => {
     const maxElectrons = storageUpgrades[state.upgrades.storageCapacity].electrons;
     if (state.inventory.electrons >= maxElectrons) {
-        showNotification("Electron hotbar is full! Give or use electrons before grabbing more.");
-        return;
+        if (!state.upgrades.electronRouter) {
+            showNotification("Electron hotbar is full! Give or use electrons before grabbing more.");
+            return;
+        } else {
+            let space = 0;
+            for (const symbol of nobleVaultOrder) {
+                if (!isNobleVaultUnlocked(symbol)) continue;
+                if (!state.banks[symbol]) state.banks[symbol] = { electrons: 0, energy: 0 };
+                space += nobleCapacities[symbol].electrons - state.banks[symbol].electrons;
+            }
+            if (space <= 0) {
+                showNotification("Electron hotbar AND Noble Vaults are full!");
+                return;
+            }
+        }
     }
     const el = state.currentElement;
+    if (el.isFBlock) {
+        showNotification("Electrons are unavailable in the F-block!");
+        return;
+    }
+    if (!el.firstIonizationEnergy) {
+        showNotification("This element has no ionization energy! Unable to grab electrons.");
+        return;
+    }
     const debt = state.elementDebts[el.symbol] || 0;
-    const baseCost = el.firstIonizationEnergy ? Math.round(el.firstIonizationEnergy * 200) : 2000;
-    const currentCost = Math.round(baseCost * Math.pow(1.2, debt));
+    let baseCost = Math.round(el.firstIonizationEnergy * 120);
+    if (state.upgrades.ionizationSaver === 1) baseCost = Math.round(baseCost * 0.4);
+    else if (state.upgrades.ionizationSaver >= 2) baseCost = Math.round(baseCost * 0.1);
+    const currentCost = Math.round(baseCost * Math.pow(1.5, debt));
 
     if (state.energy < currentCost) {
         showNotification("Not enough energy to grab this electron!");
         return;
     }
     state.energy -= currentCost;
+
     state.inventory.electrons++;
+    if (state.inventory.electrons > maxElectrons) {
+        const overflow = state.inventory.electrons - maxElectrons;
+        const routed = routeOverflowElectrons(overflow);
+        state.inventory.electrons -= routed;
+    }
+
     state.totalElectronsEarned++;
     state.elementDebts[el.symbol] = debt + 1;
     updateHUD();
@@ -1116,15 +1314,29 @@ document.getElementById('btn-grab-electron').addEventListener('click', () => {
 
 document.getElementById('btn-give-electron').addEventListener('click', () => {
     const el = state.currentElement;
+    if (!el.electronAffinity) {
+        showNotification("This element does not accept donated electrons!");
+        return;
+    }
     const giveCount = state.elementGiveCount[el.symbol] || 0;
-    const baseGain = Math.round(2000 * (el.electronAffinity || 0));
+    const baseGain = Math.pow(2.3, el.electronAffinity) * 600;
     const gain = Math.round(baseGain * Math.pow(0.8, giveCount));
 
     if (state.inventory.electrons > 0 && gain > 0) {
         state.inventory.electrons--;
         const before = state.energy;
-        state.energy = Math.min(state.maxEnergy, state.energy + gain);
-        state.totalEnergyEarned += (state.energy - before);
+
+        if (state.upgrades.energyRouter && state.energy + gain > state.maxEnergy) {
+            const spaceInMax = Math.max(0, state.maxEnergy - state.energy);
+            const overflow = gain - spaceInMax;
+            const routed = routeOverflowEnergy(overflow);
+            state.energy = Math.min(state.maxEnergy, state.energy + spaceInMax);
+            state.totalEnergyEarned += (state.energy - before) + routed;
+        } else {
+            state.energy = Math.min(state.maxEnergy, state.energy + gain);
+            state.totalEnergyEarned += (state.energy - before);
+        }
+
         state.elementGiveCount[el.symbol] = giveCount + 1;
         updateHUD();
         openNucleusMenu();
@@ -1432,7 +1644,6 @@ function tryMove(dx, dy) {
         }
 
         // Block paths between transition metals (y<=7) and f-block rows (y>=9)
-        // Exception: Ac → Ce
         if (el.ypos <= 7 && target.ypos >= 9 && !(el.symbol === 'Ac' && target.symbol === 'Ce')) {
             return;
         }
@@ -1440,27 +1651,17 @@ function tryMove(dx, dy) {
             return;
         }
 
-        // Ac → Ce bridge costs 20 electrons
-        if ((el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac')) {
-            const bridgeKey = el.symbol + '-' + target.symbol;
-            if (!state.bridges.has(bridgeKey)) {
-                let enterX = Math.floor(target.gridSize / 2);
-                let enterY = Math.floor(target.gridSize / 2);
-                if (dx > 0) { enterX = 0; enterY = Math.floor(target.gridSize / 2); }
-                if (dx < 0) { enterX = target.gridSize - 1; enterY = Math.floor(target.gridSize / 2); }
-                if (dy > 0) { enterY = 0; enterX = Math.floor(target.gridSize / 2); }
-                if (dy < 0) { enterY = target.gridSize - 1; enterX = Math.floor(target.gridSize / 2); }
-                clearAction();
-                promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'f-Block Descent', key: bridgeKey, cost: 20, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to Descend into the f-block! (-20 Electrons)`);
-                return;
-            }
-        }
+        if (el.group === 18 && dy !== 0) return;
+        if (el.group === 18 && dx === 1) return; // World boundary right
 
-        if (el.group === 18 && dy !== 0) {
-            return;
-        }
-        if (el.group === 18 && dx === 1) {
-            return; // World boundary right
+        const moveType = getMovementType(el, target);
+        let isAcCe = (el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac');
+        const bridgeKey = el.symbol + '-' + target.symbol; // Unidirectional unlock
+
+        if (!state.bridges.has(bridgeKey)) {
+            if (isAcCe || moveType === 'NOBLE_BRIDGE' || moveType === 'IONIC' || moveType === 'COVALENT') {
+                return; // Block move if bridge not built
+            }
         }
 
         let enterX = centerIdx;
@@ -1469,24 +1670,6 @@ function tryMove(dx, dy) {
         if (dx < 0) { enterX = target.gridSize - 1; enterY = Math.floor(target.gridSize / 2); }
         if (dy > 0) { enterY = 0; enterX = Math.floor(target.gridSize / 2); }
         if (dy < 0) { enterY = target.gridSize - 1; enterX = Math.floor(target.gridSize / 2); }
-
-        const moveType = getMovementType(el, target);
-        const bridgeKey = el.symbol + '-' + target.symbol; // Unidirectional unlock
-
-        if (moveType === 'IONIC' && !state.bridges.has(bridgeKey)) {
-            clearAction();
-            const isFBlockBridge = el.isFBlock && target.isFBlock;
-            const cost = isFBlockBridge ? 6 : 5;
-            const type = isFBlockBridge ? 'F-Block Ionic Bridge' : 'Ionic Bridge';
-            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: cost, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to form an Ionic Bridge to ${target.symbol} (-${cost} Electrons)`);
-            return;
-        }
-
-        if (moveType === 'COVALENT' && !state.bridges.has(bridgeKey)) {
-            clearAction();
-            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 2, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to form a Covalent Bond to ${target.symbol} (-2 Electrons)`);
-            return;
-        }
 
         clearAction();
         commitInterElementMove(target, enterX, enterY);
@@ -1554,6 +1737,63 @@ function commitLocalMove(x, y) {
                 } else {
                     const actualCost = getShardHarvestCost(shard.type);
                     promptAction('HARVEST_SHARD', { shard }, `Press [ENTER] to harvest the ${shard.type.toUpperCase()}-Shard (-${actualCost} Energy)`);
+                }
+            } else if (!state.pendingAction) {
+                // Check if on edge to prompt bridge
+                const isMidX = (x === centerIdx);
+                const isMidY = (y === centerIdx);
+                if ((isMidX && (y === 0 || y === el.gridSize - 1)) || (isMidY && (x === 0 || x === el.gridSize - 1))) {
+                    let dx = 0, dy = 0;
+                    if (x === 0) dx = -1;
+                    if (x === el.gridSize - 1) dx = 1;
+                    if (y === 0) dy = -1;
+                    if (y === el.gridSize - 1) dy = 1;
+
+                    const target = getNearestElementFrom(el, dx, dy);
+                    if (target) {
+                        let valid = true;
+                        if (el.group === 2 && dx === 1 && target.group >= 3 && target.group <= 12) valid = false;
+                        if (el.group === 3 && dx === -1 && target.group === 2) valid = false;
+                        if (el.group === 18 && dy !== 0) valid = false;
+                        if (el.group === 18 && dx === 1) valid = false;
+                        if (el.ypos <= 7 && target.ypos >= 9 && !(el.symbol === 'Ac' && target.symbol === 'Ce')) valid = false;
+                        if (el.ypos >= 9 && target.ypos <= 7 && !(el.symbol === 'Ce' && target.symbol === 'Ac')) valid = false;
+
+                        if (valid) {
+                            const moveType = getMovementType(el, target);
+                            let isAcCe = (el.symbol === 'Ac' && target.symbol === 'Ce') || (el.symbol === 'Ce' && target.symbol === 'Ac');
+                            const bridgeKey = el.symbol + '-' + target.symbol;
+
+                            let enterX = centerIdx;
+                            let enterY = centerIdx;
+                            if (dx > 0) { enterX = 0; enterY = Math.floor(target.gridSize / 2); }
+                            if (dx < 0) { enterX = target.gridSize - 1; enterY = Math.floor(target.gridSize / 2); }
+                            if (dy > 0) { enterY = 0; enterX = Math.floor(target.gridSize / 2); }
+                            if (dy < 0) { enterY = target.gridSize - 1; enterX = Math.floor(target.gridSize / 2); }
+
+                            if (!state.bridges.has(bridgeKey)) {
+                                if (isAcCe) {
+                                    promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'f-Block Descent', key: bridgeKey, cost: 30, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to Descend into the f-block! (-30 Electrons)`);
+                                } else if (moveType === 'NOBLE_BRIDGE') {
+                                    const nobleSymbol = target.group === 18 ? target.symbol : el.symbol;
+                                    const config = nobleVaultBridgeCosts[nobleSymbol];
+                                    if (state.upgrades.storageCapacity >= config.requiredLevel) {
+                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Noble Vault Bridge', key: bridgeKey, cost: config.cost, color: 'var(--accent-gold, #ffd700)' }, `Press ENTER to build a Bridge to ${nobleSymbol} (-${config.cost} Electrons)`);
+                                    } else {
+                                        const upgradeNames = ['Capacity I', 'Capacity II', 'Capacity III', 'Capacity IV', 'Capacity V', 'Capacity VI'];
+                                        promptAction('NO_ACTION', {}, `Requires Energy ${upgradeNames[config.requiredLevel - 1] || 'Capacity Upgrades'} to build a bridge to ${nobleSymbol}.`);
+                                    }
+                                } else if (moveType === 'IONIC') {
+                                    const isFBlockBridge = el.isFBlock && target.isFBlock;
+                                    const cost = isFBlockBridge ? 6 : 5;
+                                    const type = isFBlockBridge ? 'F-Block Ionic Bridge' : 'Ionic Bridge';
+                                    promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: cost, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to form an Ionic Bridge to ${target.symbol} (-${cost} Electrons)`);
+                                } else if (moveType === 'COVALENT') {
+                                    promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 2, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to form a Covalent Bond to ${target.symbol} (-2 Electrons)`);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
