@@ -103,14 +103,6 @@ export const calculateMovementCost = (element) => {
     return base + massFactor + radiusFactor;
 };
 
-/**
- * Calculates radiation drain per tick.
- * Higher periods = higher drain.
- */
-export const calculateRadiationDrain = (element) => {
-    if (element.period <= 3) return 0;
-    return (element.period - 3) * 0.5;
-};
 
 /**
  * Gets the color associated with an element's category.

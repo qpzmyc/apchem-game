@@ -16,6 +16,15 @@
       <div class="stats-container">
         <div class="stat-bar-wrapper">
           <div class="stat-label">
+            <span>QUESTS</span>
+            <span id="quest-value">0 / 60</span>
+          </div>
+          <div class="progress-track">
+            <div id="quest-fill" class="progress-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+        <div class="stat-bar-wrapper">
+          <div class="stat-label">
             <span>RADIATION</span>
             <span id="rad-value">0%</span>
           </div>
@@ -25,6 +34,11 @@
         </div>
       </div>
     </header>
+
+    <!-- Quest Tracker (fixed position, right side) -->
+    <div id="quest-tracker" class="quest-tracker">
+      <!-- Quests will be injected here -->
+    </div>
 
     <div class="map-viewport">
       <!-- The HTML5 Canvas Engine -->
@@ -169,6 +183,27 @@
               </div>
               <div class="inv-card-value"><span id="inv-catalytic">0</span></div>
             </div>
+            <div class="inv-card material-card covalent-bridger-card">
+              <div class="inv-card-header">
+                <span class="material-indicator">🌉</span>
+                <span class="inv-card-title">Covalent Bridger</span>
+              </div>
+              <div class="inv-card-value"><span id="inv-covalent-bridger">0</span></div>
+            </div>
+            <div class="inv-card material-card ionic-bridger-card">
+              <div class="inv-card-header">
+                <span class="material-indicator">🌉</span>
+                <span class="inv-card-title">Ionic Bridger</span>
+              </div>
+              <div class="inv-card-value"><span id="inv-ionic-bridger">0</span></div>
+            </div>
+            <div class="inv-card material-card rad-vial-card">
+              <div class="inv-card-header">
+                <span class="material-indicator">🧪</span>
+                <span class="inv-card-title">Radiation Vial</span>
+              </div>
+              <div class="inv-card-value"><span id="inv-rad-vial">0</span></div>
+            </div>
           </div>
         </div>
 
@@ -218,6 +253,51 @@
       </div>
     </div>
 
+    <!-- Find Menu Overlay -->
+    <div id="find-menu-overlay" class="modal-overlay" style="display: none;">
+      <div class="glass-panel minigame-modal" style="width: 800px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column;">
+        <h2 class="title" style="margin-bottom: 20px;">Find Item Location</h2>
+        <div id="find-list" style="display: flex; flex-direction: column; gap: 10px; overflow-y: auto; flex-grow: 1; padding-right: 10px;">
+          <!-- Dynamically populated -->
+        </div>
+        <button class="btn btn-secondary" id="btn-close-find"
+          style="margin-top: 20px; width: 100%; padding: 15px; font-size: 1.2rem;">Back (ESC/F)</button>
+      </div>
+    </div>
+
+    <!-- Find Confirm Overlay -->
+    <div id="find-confirm-overlay" class="modal-overlay" style="display: none; z-index: 2100;">
+      <div class="glass-panel" style="width: 400px; padding: 30px; text-align: center;">
+        <h3 id="find-confirm-text" style="font-size: 1.5rem; margin-bottom: 25px;">Spend one Catalytic Ore to find this item?</h3>
+        <div style="display: flex; gap: 15px;">
+          <button class="btn btn-secondary" id="btn-find-cancel" style="flex: 1; padding: 10px;">Cancel</button>
+          <button class="btn btn-primary" id="btn-find-yes" style="flex: 1; padding: 10px;">Yes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vial Confirm Overlay -->
+    <div id="vial-confirm-overlay" class="modal-overlay" style="display: none; z-index: 2100;">
+      <div class="glass-panel" style="width: 400px; padding: 30px; text-align: center;">
+        <h3 style="font-size: 1.5rem; margin-bottom: 25px;">Consume one radiation vial to decrease radiation by 20%?</h3>
+        <div style="display: flex; gap: 15px;">
+          <button class="btn btn-secondary" id="btn-vial-cancel" style="flex: 1; padding: 10px;">Cancel</button>
+          <button class="btn btn-primary" id="btn-vial-yes" style="flex: 1; padding: 10px;">Yes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Location Display Overlay -->
+    <div id="location-display-overlay" class="modal-overlay" style="display: none; z-index: 2100;">
+      <div class="glass-panel minigame-modal" style="width: 600px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; align-items: center;">
+        <h2 id="location-display-title" class="title" style="margin-bottom: 25px;">The Item is at:</h2>
+        <div id="location-display-grid" style="display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; margin-bottom: 30px;">
+          <!-- Dynamically populated element cards -->
+        </div>
+        <button class="btn btn-secondary" id="btn-close-location" style="padding: 15px 40px; font-size: 1.2rem; width: 100%;">Got it</button>
+      </div>
+    </div>
+
     <!-- Nucleus Drafting Minigame Overlay -->
     <div id="minigame-overlay" class="modal-overlay" style="display: none;">
       <div class="glass-panel minigame-modal" style="position: relative;">
@@ -262,19 +342,25 @@
     </div>
 
     <div id="remote-vault-prompt"
-      style="display: none; position: absolute; bottom: 100px; left: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
+      style="display: none; position: absolute; bottom: 140px; left: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
       🏦 Press [N] for Remote Noble Vault
     </div>
 
     <div id="h-drive-prompt"
-      style="display: none; position: absolute; bottom: 75px; left: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
+      style="display: none; position: absolute; bottom: 110px; left: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
       🚀 Press [H] to Teleport to Hydrogen
     </div>
 
     <div id="map-prompt"
       style="position: absolute; bottom: 20px; left: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">
       🗺️ Press [M] for Map<br>
-      🎒 Press [E] for Inventory
+      🎒 Press [E] for Inventory<br>
+      🔍 Press [F] to Find Item
+    </div>
+
+    <div id="rad-vial-prompt"
+      style="display: none; position: absolute; bottom: 20px; right: 20px; font-size: 1.2rem; opacity: 0.8; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5); color: var(--accent-cyan);">
+      🧪 Press [V] to use a Radiation Vial
     </div>
 
     <div id="inventory-bar" class="glass-panel"

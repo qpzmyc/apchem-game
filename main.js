@@ -1,6 +1,7 @@
 import './style.css'
-import { elements, calculateRadiationDrain, getElementColor } from './src/elements.js'
+import { elements, getElementColor } from './src/elements.js'
 import { craftableItems } from './src/crafting.js'
+import { quests } from './src/quests.js'
 
 // --- Constants & Rules ---
 const DEV_MODE = false; // Set to true to enable playtest cheats (Q and Z)
@@ -40,7 +41,50 @@ const trendRankings = {
     boilingPoint: [...elements].sort((a, b) => (b.boilingPoint || 0) - (a.boilingPoint || 0)),
 };
 
-function getElementRank(element, category) {
+const trendRankingsLow = {
+    electronegativity: [...elements].sort((a, b) => {
+        const valA = a.electronegativity !== undefined && a.electronegativity !== null ? a.electronegativity : 0;
+        const valB = b.electronegativity !== undefined && b.electronegativity !== null ? b.electronegativity : 0;
+        return valA - valB;
+    }),
+    electronAffinity: [...elements].sort((a, b) => {
+        const valA = a.electronAffinity !== undefined && a.electronAffinity !== null ? a.electronAffinity : -999;
+        const valB = b.electronAffinity !== undefined && b.electronAffinity !== null ? b.electronAffinity : -999;
+        return valA - valB;
+    }),
+    firstIonizationEnergy: [...elements].sort((a, b) => {
+        const valA = a.firstIonizationEnergy !== undefined && a.firstIonizationEnergy !== null ? a.firstIonizationEnergy : 0;
+        const valB = b.firstIonizationEnergy !== undefined && b.firstIonizationEnergy !== null ? b.firstIonizationEnergy : 0;
+        return valA - valB;
+    }),
+    atomicRadius: [...elements].sort((a, b) => {
+        const valA = a.atomicRadius !== undefined && a.atomicRadius !== null ? a.atomicRadius : 0;
+        const valB = b.atomicRadius !== undefined && b.atomicRadius !== null ? b.atomicRadius : 0;
+        return valA - valB;
+    }),
+    atomicNumber: [...elements].sort((a, b) => a.atomicNumber - b.atomicNumber),
+    molarMass: [...elements].sort((a, b) => a.molarMass - b.molarMass),
+    density: [...elements].sort((a, b) => {
+        const valA = a.density !== undefined && a.density !== null ? a.density : 0;
+        const valB = b.density !== undefined && b.density !== null ? b.density : 0;
+        return valA - valB;
+    }),
+    meltingPoint: [...elements].sort((a, b) => {
+        const valA = a.meltingPoint !== undefined && a.meltingPoint !== null ? a.meltingPoint : 0;
+        const valB = b.meltingPoint !== undefined && b.meltingPoint !== null ? b.meltingPoint : 0;
+        return valA - valB;
+    }),
+    boilingPoint: [...elements].sort((a, b) => {
+        const valA = a.boilingPoint !== undefined && a.boilingPoint !== null ? a.boilingPoint : 0;
+        const valB = b.boilingPoint !== undefined && b.boilingPoint !== null ? b.boilingPoint : 0;
+        return valA - valB;
+    }),
+};
+
+function getElementRank(element, category, isOpposite = false) {
+    if (isOpposite) {
+        return trendRankingsLow[category].findIndex(e => e.symbol === element.symbol) + 1;
+    }
     return trendRankings[category].findIndex(e => e.symbol === element.symbol) + 1;
 }
 
@@ -50,11 +94,11 @@ const hydrogen = elements.find(e => e.symbol === 'H');
 // --- Upgrade Tiers ---
 const shardUpgrades = [
     { s: 3, p: 0, d: 0, f: 0 },
-    { s: 5, p: 2, d: 0, f: 0 },
-    { s: 6, p: 3, d: 1, f: 0 },
-    { s: 8, p: 5, d: 2, f: 0 },
-    { s: 12, p: 6, d: 4, f: 1 },
-    { s: 20, p: 10, d: 6, f: 2 }
+    { s: 5, p: 1, d: 0, f: 0 },
+    { s: 6, p: 2, d: 1, f: 0 },
+    { s: 8, p: 4, d: 2, f: 0 },
+    { s: 12, p: 8, d: 4, f: 1 },
+    { s: 20, p: 12, d: 6, f: 2 }
 ];
 
 const storageUpgrades = [
@@ -91,10 +135,15 @@ const state = {
     energy: 100,
     maxEnergy: storageUpgrades[0].energy,
     radiation: 0,
+    totalElectronsEarned: 0,
+    totalCatalyticOres: 0,
     inventory: {
         electrons: 0,
         catalyticOres: 0,
-        shards: { s: 0, p: 0, d: 0, f: 0 }
+        shards: { s: 0, p: 0, d: 0, f: 0 },
+        covalentBridger: 0,
+        ionicBridger: 0,
+        radiationVial: 0
     },
     upgrades: {
         shardCapacity: 0,
@@ -131,7 +180,11 @@ const state = {
     won: false,
     totalEnergyEarned: 100, // Start with the initial 100 energy
     totalElectronsEarned: 0,
-    top5Placements: 0
+    top5Placements: 0,
+    maxEnergyFromHarvest: 0,
+    quests: { completed: [], active: [] },
+    foundItems: {},
+    grabbedCsElectron: false
 };
 
 // --- Canvas Setup ---
@@ -206,19 +259,19 @@ const nobleCapacities = {
     'Ne': { electrons: 4, energy: 3500 },
     'Ar': { electrons: 6, energy: 8000 },
     'Kr': { electrons: 8, energy: 17000 },
-    'Xe': { electrons: 12, energy: 35000 },
-    'Rn': { electrons: 16, energy: 100000 },
-    'Og': { electrons: 24, energy: 300000 }
+    'Xe': { electrons: 12, energy: 45000 },
+    'Rn': { electrons: 16, energy: 170000 },
+    'Og': { electrons: 24, energy: 400000 }
 };
 
 const nobleVaultBridgeCosts = {
     'He': { cost: 0, requiredLevel: 0 },
     'Ne': { cost: 2, requiredLevel: 1 },
     'Ar': { cost: 6, requiredLevel: 2 },
-    'Kr': { cost: 12, requiredLevel: 3 },
-    'Xe': { cost: 18, requiredLevel: 4 },
-    'Rn': { cost: 26, requiredLevel: 5 },
-    'Og': { cost: 34, requiredLevel: 6 }
+    'Kr': { cost: 10, requiredLevel: 3 },
+    'Xe': { cost: 15, requiredLevel: 4 },
+    'Rn': { cost: 23, requiredLevel: 5 },
+    'Og': { cost: 40, requiredLevel: 6 }
 };
 
 const nobleVaultOrder = ['He', 'Ne', 'Ar', 'Kr', 'Xe', 'Rn', 'Og'];
@@ -500,7 +553,7 @@ function renderLoop() {
                     ctx.shadowBlur = 0;
 
                     // Draw shard icon if present on this cell
-                    const shardHere = getShardAt(el.symbol, x, y);
+                    const shardHere = (el.symbol === state.currentElement.symbol) ? getShardAt(el.symbol, x, y) : null;
                     if (shardHere) {
                         const shardColors = { s: '#ff6666', p: '#66ccff', d: '#ffcc33', f: '#cc66ff' };
                         const sc = shardColors[shardHere.type];
@@ -756,7 +809,7 @@ let minigameState = {
 };
 
 // Skips per period
-const skipsPerPeriod = { 1: 2, 2: 3, 3: 3, 4: 4, 5: 4, 6: 5, 7: 6 };
+const skipsPerPeriod = { 1: 1, 2: 2, 3: 2, 4: 3, 5: 3, 6: 4, 7: 5 };
 
 // Helper: pick N random items from array without replacement
 function pickRandom(arr, n) {
@@ -844,9 +897,9 @@ function getGridColumns(totalSlots) {
 // Calculate live energy from running total rank
 function calcMinigameEnergy(totalRank) {
     const protons = minigameState.nucleusElement.atomicNumber;
-    const baseEnergy = Math.pow(0.986, totalRank - 34) * Math.pow(1.05, protons + 6) * 1700;
+    const baseEnergy = Math.pow(0.986, totalRank - 12) * Math.pow(1.04, protons + 11) * 2300;
     const boosterLvl = state.upgrades.energyBooster || 0;
-    const boosterMultipliers = { 0: 1, 1: 1.5, 2: 2, 3: 3, 4: 4.5, 5: 8 };
+    const boosterMultipliers = { 0: 1, 1: 1.5, 2: 2, 3: 3, 4: 4.5, 5: 8, 6: 17 };
     const mult = boosterMultipliers[boosterLvl] || 1;
     let energy = Math.round(baseEnergy * mult);
     // F-block energy nerf: earn 6x less energy
@@ -873,8 +926,7 @@ function findBestSlotForElement(el) {
 
     for (const slot of minigameState.slotConfigs) {
         if (minigameState.lockedSlots.has(slot.slotKey)) continue;
-        let rank = getElementRank(el, slot.category);
-        if (slot.isOpposite) rank = 119 - rank;
+        let rank = getElementRank(el, slot.category, slot.isOpposite);
         if (rank < bestRank) {
             bestRank = rank;
             bestSlot = slot;
@@ -920,7 +972,7 @@ function showRankNotification(el, rank, bestSlot, bestRank, placedSlot) {
 
 function getMinigameElementPools() {
     const nobleGases = elements.filter(el => el.group === 18);
-    const p2p3set = new Set(['H', 'Br', 'Ca', 'K', 'Fr', 'Ts', 'Ra', 'Mc', 'Ac', 'Lv']);
+    const p2p3set = new Set(['H', 'Br', 'Ca', 'K', 'Fr', 'Ts', 'Ra', 'Mc', 'Ac', 'Lv', 'Th', 'Fl', 'Nh']);
     const p2p3 = elements.filter(el =>
         ((el.period === 2 || el.period === 3 || p2p3set.has(el.symbol)) && el.group !== 18)
     );
@@ -962,6 +1014,15 @@ function pickElementWithProbabilities(pools, usedSet) {
 function startMinigame() {
     // Close the nucleus menu
     menuOverlay.style.display = 'none';
+
+    const isFBlock = state.currentElement.category === 'lanthanide' || state.currentElement.category === 'actinide';
+    if (isFBlock) {
+        let radBurst = 20;
+        if (state.upgrades.shieldingSuit) radBurst = 10;
+        state.radiation += radBurst;
+        if (state.radiation > 100) state.radiation = 100;
+        updateHUD();
+    }
 
     const period = state.currentElement.period || 1;
     const config = buildMinigameConfig(period);
@@ -1017,12 +1078,6 @@ function startMinigame() {
             <div class="cat-label">${labelText}</div>
             <div class="cat-value"></div>
         `;
-
-        // Color opposite categories with a warning tint
-        if (slot.isOpposite) {
-            btn.style.borderColor = 'rgba(255, 100, 100, 0.4)';
-            btn.style.background = 'rgba(255, 50, 50, 0.08)';
-        }
 
         btn.addEventListener('click', () => {
             assignToSlot(slot.slotKey);
@@ -1100,6 +1155,8 @@ function dealNextElement() {
                 skipBtn.style.opacity = '1';
                 skipBtn.innerText = `⏭ Skip (${minigameState.skipsRemaining} left)`;
             }
+
+            applyTrendAnalyzer(finalEl);
         }
     }, 50);
 }
@@ -1120,6 +1177,8 @@ function assignToSlot(slotKey) {
     if (!minigameState.active || !minigameState.currentElement || minigameState.spinning) return;
     if (minigameState.lockedSlots.has(slotKey)) return;
 
+    document.querySelectorAll('.trend-worst').forEach(div => div.classList.remove('trend-worst'));
+
     const el = minigameState.currentElement;
 
     // Find the best available slot BEFORE locking this one
@@ -1129,8 +1188,7 @@ function assignToSlot(slotKey) {
     const placedSlot = minigameState.slotConfigs.find(s => s.slotKey === slotKey);
 
     // Calculate rank for the placement
-    let rank = getElementRank(el, placedSlot.category);
-    if (placedSlot.isOpposite) rank = 119 - rank;
+    let rank = getElementRank(el, placedSlot.category, placedSlot.isOpposite);
 
     // Lock it
     minigameState.assignments[slotKey] = el;
@@ -1177,8 +1235,7 @@ function calculateResults() {
         const el = minigameState.assignments[slot.slotKey];
         if (!el) continue;
 
-        let rank = getElementRank(el, slot.category);
-        if (slot.isOpposite) rank = 119 - rank;
+        let rank = getElementRank(el, slot.category, slot.isOpposite);
 
         const labelText = slot.isOpposite
             ? oppositeCategoryLabels[slot.category]
@@ -1216,6 +1273,8 @@ document.getElementById('btn-collect-energy').addEventListener('click', () => {
             state.totalEnergyEarned += (state.energy - before);
         }
 
+        state.maxEnergyFromHarvest = Math.max(state.maxEnergyFromHarvest || 0, reward);
+
         minigameState.pendingReward = 0;
     }
 
@@ -1224,11 +1283,11 @@ document.getElementById('btn-collect-energy').addEventListener('click', () => {
     if (el && el.symbol !== 'H') {
         const numCategories = minigameState.totalSlots;
         const avgRank = minigameState.runningTotalRank / numCategories;
-        let chance = Math.pow(0.9, avgRank) * 2;
+        let chance = Math.pow(0.9, avgRank) * 2.3;
 
         // Tripled in d-block (groups 3-12 and not f-block)
         if (el.group >= 3 && el.group <= 12 && !el.isFBlock) {
-            chance *= 3;
+            chance *= 2;
         }
         // Doubled in period 7
         if (el.period === 7) {
@@ -1242,7 +1301,8 @@ document.getElementById('btn-collect-energy').addEventListener('click', () => {
         const roll = Math.random();
         if (roll < chance) {
             state.inventory.catalyticOres++;
-            showNotification("You recieved a Catalytic Ore!", 'success');
+            state.totalCatalyticOres++;
+            showNotification("The nucleus precipitated a Catalytic Ore!", 'success');
         }
     }
 
@@ -1300,6 +1360,7 @@ document.getElementById('btn-grab-electron').addEventListener('click', () => {
     state.energy -= currentCost;
 
     state.inventory.electrons++;
+
     if (state.inventory.electrons > maxElectrons) {
         const overflow = state.inventory.electrons - maxElectrons;
         const routed = routeOverflowElectrons(overflow);
@@ -1308,6 +1369,9 @@ document.getElementById('btn-grab-electron').addEventListener('click', () => {
 
     state.totalElectronsEarned++;
     state.elementDebts[el.symbol] = debt + 1;
+    if (el && el.symbol === 'Cs') {
+        state.grabbedCsElectron = true;
+    }
     updateHUD();
     openNucleusMenu();
 });
@@ -1479,9 +1543,46 @@ window.addEventListener('keydown', (e) => {
             state.energy = 100;
             state.inventory.electrons = 0;
             state.canReset = false;
+            state.radiation = 0;
             updateHUD();
             processSurvival();
             showNotification("Respawned at Hydrogen!", 'success');
+            promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+        }
+        return;
+    }
+
+    if (e.key === 'f' || e.key === 'F') {
+        const findOverlay = document.getElementById('find-menu-overlay');
+        const locOverlay = document.getElementById('location-display-overlay');
+        const confirmOverlay = document.getElementById('find-confirm-overlay');
+
+        if (locOverlay.style.display === 'flex' || confirmOverlay.style.display === 'flex') {
+            locOverlay.style.display = 'none';
+            confirmOverlay.style.display = 'none';
+            return;
+        }
+
+        if (findOverlay.style.display === 'flex') {
+            findOverlay.style.display = 'none';
+            state.menuOpen = false;
+        } else {
+            if (!state.menuOpen && !minigameState.active && !state.mapOpen) {
+                openFindMenu();
+            }
+        }
+        return;
+    }
+
+    if (e.key === 'v' || e.key === 'V') {
+        const confirmOverlay = document.getElementById('vial-confirm-overlay');
+        if (confirmOverlay.style.display === 'flex') {
+            confirmOverlay.style.display = 'none';
+            return;
+        }
+
+        if (state.inventory.radiationVial > 0 && !state.menuOpen && !minigameState.active && !state.mapOpen && !state.inventoryOpen) {
+            confirmOverlay.style.display = 'flex';
         }
         return;
     }
@@ -1520,8 +1621,14 @@ window.addEventListener('keydown', (e) => {
         state.inventory.shards.d++;
         state.inventory.shards.f++;
         state.inventory.catalyticOres++;
+        state.totalCatalyticOres++;
         state.inventory.electrons += 5;
         state.totalElectronsEarned += 5;
+        state.inventory.covalentBridger += 2;
+        state.inventory.ionicBridger += 2;
+        state.inventory.radiationVial += 2;
+        const findOverlayZ = document.getElementById('find-menu-overlay');
+        if (findOverlayZ && findOverlayZ.style.display === 'flex') return;
         updateHUD();
         if (state.menuOpen) {
             openNucleusMenu();
@@ -1550,15 +1657,28 @@ window.addEventListener('keydown', (e) => {
         return;
     }
 
-    if (state.menuOpen || state.inventoryOpen || state.mapOpen || (craftingOverlay && craftingOverlay.style.display === 'flex')) {
+    if (state.menuOpen || state.inventoryOpen || state.mapOpen || (craftingOverlay && craftingOverlay.style.display === 'flex') || document.getElementById('vial-confirm-overlay').style.display === 'flex') {
         if (e.key === 'Escape') {
-            if (state.mapOpen) {
+            const vialConfirm = document.getElementById('vial-confirm-overlay');
+            if (vialConfirm.style.display === 'flex') {
+                vialConfirm.style.display = 'none';
+            } else if (state.mapOpen) {
                 closeMap();
             } else if (state.inventoryOpen) {
                 closeInventoryMenu();
             } else if (craftingOverlay && craftingOverlay.style.display === 'flex') {
                 craftingOverlay.style.display = 'none';
                 menuOverlay.style.display = 'flex'; // Go back to nucleus menu
+            } else if (document.getElementById('find-menu-overlay').style.display === 'flex') {
+                const locOverlay = document.getElementById('location-display-overlay');
+                const confirmOverlay = document.getElementById('find-confirm-overlay');
+                if (locOverlay.style.display === 'flex' || confirmOverlay.style.display === 'flex') {
+                    locOverlay.style.display = 'none';
+                    confirmOverlay.style.display = 'none';
+                } else {
+                    document.getElementById('find-menu-overlay').style.display = 'none';
+                    state.menuOpen = false;
+                }
             } else if (state.menuOpen) {
                 closeNucleusMenu();
             }
@@ -1701,10 +1821,20 @@ function commitLocalMove(x, y) {
     let baseAmount = getBaseMovementCost(el);
     let cost = isNucleus ? 0 : baseAmount * (1 + 0.03 * el.atomicNumber);
 
+    if (state.radiation >= 100) cost *= 2;
+
+    if (el.isFBlock) cost *= 2;
+
+    //Boots
     if (state.upgrades.eBoots === 1) cost *= 0.6;
     else if (state.upgrades.eBoots === 2) cost *= 0.3;
     else if (state.upgrades.eBoots === 3) cost *= 0.1;
-    else if (state.upgrades.eBoots >= 4) cost *= 0.04;
+    else if (state.upgrades.eBoots >= 4) cost *= 0.03;
+
+    // Radiation Penalty
+    const radPenaltyBase = state.upgrades.shieldingSuit ? 1.016 : 1.02;
+    cost *= Math.pow(radPenaltyBase, state.radiation);
+
     cost = Math.floor(cost);
 
     if (state.energy >= cost) {
@@ -1778,7 +1908,11 @@ function commitLocalMove(x, y) {
                                     const nobleSymbol = target.group === 18 ? target.symbol : el.symbol;
                                     const config = nobleVaultBridgeCosts[nobleSymbol];
                                     if (state.upgrades.storageCapacity >= config.requiredLevel) {
-                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Noble Vault Bridge', key: bridgeKey, cost: config.cost, color: 'var(--accent-gold, #ffd700)' }, `Press ENTER to build a Bridge to ${nobleSymbol} (-${config.cost} Electrons)`);
+                                        if (state.inventory.ionicBridger > 0) {
+                                            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Noble Vault Bridge', key: bridgeKey, cost: 0, useIonicBridger: true, color: 'var(--accent-gold, #ffd700)' }, `Press ENTER to build a Noble Vault Bridge to ${nobleSymbol} (-0 Electrons)`);
+                                        } else {
+                                            promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Noble Vault Bridge', key: bridgeKey, cost: config.cost, color: 'var(--accent-gold, #ffd700)' }, `Press ENTER to build a Noble Vault Bridge to ${nobleSymbol} (-${config.cost} Electrons)`);
+                                        }
                                     } else {
                                         const upgradeNames = ['Capacity I', 'Capacity II', 'Capacity III', 'Capacity IV', 'Capacity V', 'Capacity VI'];
                                         promptAction('NO_ACTION', {}, `Requires Energy ${upgradeNames[config.requiredLevel - 1] || 'Capacity Upgrades'} to build a bridge to ${nobleSymbol}.`);
@@ -1787,9 +1921,17 @@ function commitLocalMove(x, y) {
                                     const isFBlockBridge = el.isFBlock && target.isFBlock;
                                     const cost = isFBlockBridge ? 6 : 5;
                                     const type = isFBlockBridge ? 'F-Block Ionic Bridge' : 'Ionic Bridge';
-                                    promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: cost, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to form an Ionic Bridge to ${target.symbol} (-${cost} Electrons)`);
+                                    if (state.inventory.ionicBridger > 0) {
+                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: 0, useIonicBridger: true, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to build an Ionic Bridge to ${target.symbol} (-1 Ionic Bridger)`);
+                                    } else {
+                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: type, key: bridgeKey, cost: cost, color: 'var(--danger-purple, #c864ff)' }, `Press ENTER to form an Ionic Bridge to ${target.symbol} (-${cost} Electrons)`);
+                                    }
                                 } else if (moveType === 'COVALENT') {
-                                    promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 2, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to form a Covalent Bond to ${target.symbol} (-2 Electrons)`);
+                                    if (state.inventory.covalentBridger > 0) {
+                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 0, useCovalentBridger: true, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to build a Covalent Bond to ${target.symbol} (-1 Covalent Bridger)`);
+                                    } else {
+                                        promptAction('UNLOCK_BRIDGE', { source: el, target, enterX, enterY, type: 'Covalent Bond', key: bridgeKey, cost: 2, color: 'var(--accent-cyan, #64c8ff)' }, `Press ENTER to form a Covalent Bond to ${target.symbol} (-2 Electrons)`);
+                                    }
                                 }
                             }
                         }
@@ -1807,10 +1949,18 @@ function commitInterElementMove(targetElement, enterX, enterY) {
     let baseAmount = getBaseMovementCost(targetElement);
     let cost = baseAmount * (1 + 0.03 * targetElement.atomicNumber) * 3;
 
+    if (state.radiation >= 100) cost *= 2;
+    if (targetElement.isFBlock) cost *= 2;
+
     if (state.upgrades.eBoots === 1) cost *= 0.6;
     else if (state.upgrades.eBoots === 2) cost *= 0.3;
     else if (state.upgrades.eBoots === 3) cost *= 0.1;
-    else if (state.upgrades.eBoots >= 4) cost *= 0.04;
+    else if (state.upgrades.eBoots >= 4) cost *= 0.03;
+
+    // Radiation Penalty (same as local movement)
+    const radPenaltyBase = state.upgrades.shieldingSuit ? 1.016 : 1.02;
+    cost *= Math.pow(radPenaltyBase, state.radiation);
+
     cost = Math.floor(cost);
 
     if (state.energy >= cost) {
@@ -1819,6 +1969,9 @@ function commitInterElementMove(targetElement, enterX, enterY) {
         state.localX = enterX;
         state.localY = enterY;
         state.visitedElements.add(targetElement.symbol);
+        if (targetElement.group === 18) {
+            state.radiation = 0;
+        }
 
         updateHUD();
         processSurvival();
@@ -1858,6 +2011,12 @@ function executeAction() {
     if (type === 'UNLOCK_BRIDGE') {
         if (state.inventory.electrons >= payload.cost) {
             state.inventory.electrons -= payload.cost;
+            if (payload.useIonicBridger) {
+                state.inventory.ionicBridger = Math.max(0, state.inventory.ionicBridger - 1);
+            }
+            if (payload.useCovalentBridger) {
+                state.inventory.covalentBridger = Math.max(0, state.inventory.covalentBridger - 1);
+            }
             // Bidirectional unlock
             state.bridges.add(payload.source.symbol + '-' + payload.target.symbol);
             state.bridges.add(payload.target.symbol + '-' + payload.source.symbol);
@@ -1883,16 +2042,46 @@ function executeAction() {
     clearAction();
 }
 
-function processSurvival() {
-    let radDrain = calculateRadiationDrain(state.currentElement);
-    if (state.upgrades.shieldingSuit) radDrain *= 0.4;
-    state.radiation = Math.min(100, state.radiation + radDrain);
+const MAX_RADIATION_LIMITS = {
+    1: 0, 2: 0, 3: 5, 4: 15, 5: 30, 6: 50, 7: 75
+};
 
-    if (state.radiation > 20) {
-        state.energy -= (state.radiation / 10);
+function getPeriodMaxRadiation(element) {
+    if (element.category === 'lanthanide' || element.category === 'actinide') return 100;
+    return MAX_RADIATION_LIMITS[element.period] || 0;
+}
+
+function processSurvival() {
+    let chance = 0;
+    let amount = 0;
+    const isFBlock = state.currentElement.category === 'lanthanide' || state.currentElement.category === 'actinide';
+    const isDBlock = state.currentElement.category === 'transition metal';
+    const period = state.currentElement.period;
+
+    if (isFBlock) { chance = 1.50; amount = 3; }
+    else if (period === 3) { chance = 0.05; amount = 1; }
+    else if (period === 4) { chance = 0.10; amount = 1; }
+    else if (period === 5) { chance = 0.15; amount = 2; }
+    else if (period === 6) { chance = 0.30; amount = 2; }
+    else if (period === 7) { chance = 0.40; amount = 3; }
+
+    if (state.upgrades.shieldingSuit) chance *= 0.5;
+    if (isDBlock) amount *= 2;
+
+    const maxRad = getPeriodMaxRadiation(state.currentElement);
+    // Only cap it going UP. If they are already over the max, we let the time-based decay handle it.
+    if (state.radiation <= maxRad) {
+        if (Math.random() < chance) {
+            state.radiation += amount;
+            if (state.radiation > maxRad) {
+                state.radiation = maxRad;
+            }
+        }
     }
 
-    state.energy = Math.max(0, state.energy);
+    // Making sure we don't exceed absolute max of 100
+    if (state.radiation > 100) state.radiation = 100;
+
     updateHUD();
 }
 
@@ -1905,6 +2094,31 @@ function checkWin(target) {
         winStatElements.innerText = state.visitedElements.size;
         winStatTop5.innerText = state.top5Placements;
         setTimeout(() => { winOverlay.style.display = 'flex'; }, 500);
+    }
+}
+
+function applyTrendAnalyzer(el) {
+    document.querySelectorAll('.trend-worst').forEach(div => div.classList.remove('trend-worst'));
+
+    if (!state.upgrades.trendAnalyzer) return;
+
+    let availableSlots = minigameState.slotConfigs.filter(s => !minigameState.lockedSlots.has(s.slotKey));
+    if (availableSlots.length <= 1) return;
+
+    let worstRank = -1;
+    let worstSlot = null;
+
+    for (const slot of availableSlots) {
+        let rank = getElementRank(el, slot.category, slot.isOpposite);
+        if (rank > worstRank) {
+            worstRank = rank;
+            worstSlot = slot;
+        }
+    }
+
+    if (worstSlot) {
+        const btn = document.querySelector(`.category-btn[data-slot-key="${worstSlot.slotKey}"]`);
+        if (btn) btn.classList.add('trend-worst');
     }
 }
 
@@ -1929,6 +2143,16 @@ function updateHUD() {
     radFill.style.width = `${state.radiation}%`;
     radVal.innerText = `${Math.round(state.radiation)}%`;
 
+    const questVal = document.getElementById('quest-value');
+    const questFill = document.getElementById('quest-fill');
+    if (questVal) {
+        questVal.innerText = `${state.quests.completed.length} / 60`;
+    }
+    if (questFill) {
+        const questPct = Math.max(0, Math.min(100, (state.quests.completed.length / 60) * 100));
+        questFill.style.width = `${questPct}%`;
+    }
+
     electronCount.innerText = state.inventory.electrons;
     electronMax.innerText = `/${storageCaps.electrons}`;
 
@@ -1938,6 +2162,223 @@ function updateHUD() {
 
     const remoteVaultPrompt = document.getElementById('remote-vault-prompt');
     if (remoteVaultPrompt) remoteVaultPrompt.style.display = state.upgrades.octetRemote ? 'block' : 'none';
+
+    const radVialPrompt = document.getElementById('rad-vial-prompt');
+    if (radVialPrompt) {
+        radVialPrompt.style.display = (state.inventory.radiationVial > 0) ? 'block' : 'none';
+    }
+
+    checkQuests();
+}
+
+// Quest animation state - tracks which slots are animating
+const questSlotState = {}; // keyed by slot index, values: { animating: bool, questId: string }
+
+function getMaxQuestSlots() {
+    let maxSlots = 1;
+    if (state.quests.completed.length >= 10) maxSlots = 2;
+    if (state.quests.completed.length >= 30) maxSlots = 3;
+    return maxSlots;
+}
+
+function getNextAvailableQuest() {
+    return quests.find(q =>
+        !state.quests.completed.includes(q.id) &&
+        !state.quests.active.includes(q.id) &&
+        (typeof q.isAvailable === 'function' ? q.isAvailable(state) : true)
+    );
+}
+
+function checkQuests() {
+    // Initialize active quests on first call
+    const maxSlots = getMaxQuestSlots();
+    while (state.quests.active.length < maxSlots) {
+        const next = getNextAvailableQuest();
+        if (next) {
+            state.quests.active.push(next.id);
+        } else break;
+    }
+
+    // Check currently active quests for completion
+    for (let i = 0; i < state.quests.active.length; i++) {
+        const activeId = state.quests.active[i];
+        if (questSlotState[i]?.animating) continue; // Don't interrupt animations
+
+        const questDef = quests.find(q => q.id === activeId);
+        if (questDef && questDef.checkCondition(state)) {
+            completeQuestAtSlot(i);
+        }
+    }
+
+    renderQuestUI();
+}
+
+function completeQuestAtSlot(slotIndex) {
+    const activeId = state.quests.active[slotIndex];
+    const questDef = quests.find(q => q.id === activeId);
+    if (!questDef) return;
+
+    // Apply reward immediately, mark as animating (completed-wait)
+    questSlotState[slotIndex] = { animating: true, phase: 'completed-wait' };
+    if (questDef.rewardText && questDef.rewardText.trim() !== "") {
+        showNotification(`Quest Completed: ${questDef.title}! Reward: ${questDef.rewardText}`, 'success');
+    } else {
+        showNotification(`Quest Completed: ${questDef.title}!`, 'success');
+    }
+    if (questDef.onComplete) {
+        questDef.onComplete(state);
+    }
+    state.quests.completed.push(activeId);
+
+    // Update quest HUD immediately for each individual completed quest in the chain
+    const questVal = document.getElementById('quest-value');
+    const questFill = document.getElementById('quest-fill');
+    if (questVal) {
+        questVal.innerText = `${state.quests.completed.length} / 60`;
+    }
+    if (questFill) {
+        const questPct = Math.max(0, Math.min(100, (state.quests.completed.length / 60) * 100));
+        questFill.style.width = `${questPct}%`;
+    }
+
+    renderQuestUI();
+
+    // Wait 1 second before starting the fade-out
+    setTimeout(() => {
+        questSlotState[slotIndex] = { animating: true, phase: 'fading-out' };
+        const container = document.getElementById('quest-tracker');
+        const card = container?.querySelector(`.quest-card[data-slot="${slotIndex}"]`);
+        if (card) {
+            card.classList.add('fade-out');
+        }
+
+        // Wait 2 seconds after fade begins (3 seconds total since completion) to slide in the next quest
+        setTimeout(() => {
+            // Remove from active
+            const idx = state.quests.active.indexOf(activeId);
+            if (idx !== -1) state.quests.active.splice(idx, 1);
+
+            // Find replacement
+            const maxSlots = getMaxQuestSlots();
+            const next = getNextAvailableQuest();
+            if (next && state.quests.active.length < maxSlots) {
+                state.quests.active.splice(slotIndex, 0, next.id);
+                questSlotState[slotIndex] = { animating: true, phase: 'sliding-in', questId: next.id };
+                renderQuestUI(true);
+
+                // After slide-in animation (500ms), pause for 2 seconds
+                setTimeout(() => {
+                    questSlotState[slotIndex] = { animating: true, phase: 'cascading-pause' };
+
+                    // 2 seconds pause to let the player read it before it potentially completes
+                    setTimeout(() => {
+                        questSlotState[slotIndex] = { animating: false };
+                        const newDef = quests.find(q => q.id === next.id);
+                        if (newDef && newDef.checkCondition(state)) {
+                            // Already completed! Trigger completion cycle
+                            completeQuestAtSlot(slotIndex);
+                        } else {
+                            renderQuestUI(true);
+                        }
+                    }, 2000);
+                }, 500);
+            } else {
+                questSlotState[slotIndex] = { animating: false };
+                renderQuestUI(true);
+            }
+        }, 2000);
+    }, 1000);
+}
+
+let lastRenderedQuestIds = '';
+
+function renderQuestUI(forceRebuild = false) {
+    const container = document.getElementById('quest-tracker');
+    if (!container) return;
+
+    const currentIds = state.quests.active.join(',');
+    const anyAnimating = Object.values(questSlotState).some(s => s?.animating);
+
+    // If any slot is animating, only update progress bars on non-animating slots (don't rebuild DOM)
+    if (anyAnimating && !forceRebuild && container.children.length > 0) {
+        state.quests.active.forEach((activeId, i) => {
+            if (questSlotState[i]?.animating && questSlotState[i]?.phase !== 'completed-wait') return;
+            const card = container.querySelector(`.quest-card[data-slot="${i}"]`);
+            if (!card) return;
+            const questDef = quests.find(q => q.id === activeId);
+            if (!questDef?.getProgress) return;
+            const prog = questDef.getProgress(state);
+            const pct = Math.max(0, Math.min(100, (prog.current / prog.max) * 100));
+            const currentFmt = Number.isInteger(prog.current) ? prog.current : prog.current.toFixed(1);
+            const progressText = card.querySelector('.quest-progress-text');
+            const progressFill = card.querySelector('.quest-progress-fill');
+            if (progressText) progressText.textContent = `${currentFmt} / ${prog.max}`;
+            if (progressFill) progressFill.style.width = `${pct}%`;
+        });
+        return;
+    }
+
+    // If quests haven't changed and no force, just update progress bars in-place
+    if (currentIds === lastRenderedQuestIds && !forceRebuild && container.children.length > 0) {
+        state.quests.active.forEach((activeId, i) => {
+            const card = container.querySelector(`.quest-card[data-slot="${i}"]`);
+            if (!card) return;
+            const questDef = quests.find(q => q.id === activeId);
+            if (!questDef?.getProgress) return;
+            const prog = questDef.getProgress(state);
+            const pct = Math.max(0, Math.min(100, (prog.current / prog.max) * 100));
+            const currentFmt = Number.isInteger(prog.current) ? prog.current : prog.current.toFixed(1);
+            const progressText = card.querySelector('.quest-progress-text');
+            const progressFill = card.querySelector('.quest-progress-fill');
+            if (progressText) progressText.textContent = `${currentFmt} / ${prog.max}`;
+            if (progressFill) progressFill.style.width = `${pct}%`;
+        });
+        return;
+    }
+
+    // Full rebuild
+    let html = '';
+    if (state.quests.active.length === 0) {
+        html = `<div class="quest-card empty">No active quests</div>`;
+    } else {
+        state.quests.active.forEach((activeId, i) => {
+            const questDef = quests.find(q => q.id === activeId);
+            if (!questDef) return;
+
+            let progressHtml = '';
+            if (questDef.getProgress) {
+                const prog = questDef.getProgress(state);
+                const pct = Math.max(0, Math.min(100, (prog.current / prog.max) * 100));
+                const currentFmt = Number.isInteger(prog.current) ? prog.current : prog.current.toFixed(1);
+                progressHtml = `
+                    <div class="quest-progress-text">${currentFmt} / ${prog.max}</div>
+                    <div class="quest-progress-track">
+                        <div class="quest-progress-fill" style="width: ${pct}%;"></div>
+                    </div>
+                `;
+            }
+
+            const slotAnim = questSlotState[i];
+            let extraClass = '';
+            if (slotAnim?.animating && slotAnim.phase === 'sliding-in') {
+                extraClass = ' slide-in';
+            } else if (slotAnim?.animating && slotAnim.phase === 'fading-out') {
+                extraClass = ' fade-out';
+            }
+
+            html += `
+                <div class="quest-card${extraClass}" data-slot="${i}">
+                    <div class="quest-title">${questDef.title}</div>
+                    <div class="quest-desc">${questDef.description}</div>
+                    <div class="quest-reward">Reward: ${questDef.rewardText}</div>
+                    ${progressHtml}
+                </div>
+            `;
+        });
+    }
+
+    container.innerHTML = html;
+    lastRenderedQuestIds = currentIds;
 }
 
 function openInventoryMenu() {
@@ -1956,6 +2397,11 @@ function openInventoryMenu() {
 
     // Populate Ores
     invCatalytic.innerText = state.inventory.catalyticOres;
+
+    // Populate Bridgers and Vials
+    document.getElementById('inv-covalent-bridger').innerText = state.inventory.covalentBridger || 0;
+    document.getElementById('inv-ionic-bridger').innerText = state.inventory.ionicBridger || 0;
+    document.getElementById('inv-rad-vial').innerText = state.inventory.radiationVial || 0;
 
     inventoryOverlay.style.display = 'flex';
 }
@@ -2313,8 +2759,254 @@ function collectShard(shard) {
     showNotification(`Harvested ${shard.type.toUpperCase()}-Shard!`, 'success');
 }
 
+// --- Find Item Menu Logic ---
+function openFindMenu() {
+    state.menuOpen = true;
+    const overlay = document.getElementById('find-menu-overlay');
+    const listContainer = document.getElementById('find-list');
+    listContainer.innerHTML = '';
+
+    const validCrafts = craftableItems.filter(c => {
+        if (c.id.startsWith('upgrade_storage_')) return false;
+        if (c.id.startsWith('upgrade_shard_')) return false;
+        if (c.id.startsWith('e_booster_')) return false;
+        if (c.id.startsWith('radiation_vial_')) return false; // Handled separately as merged entry
+        if (c.locations.includes('H')) return false;
+        return true;
+    });
+
+    const extractors = validCrafts.filter(c => c.id.endsWith('_extractor'));
+    const boots = validCrafts.filter(c => c.id.startsWith('e_boots_'));
+    const rootItems = validCrafts.filter(c => !c.id.endsWith('_extractor') && !c.id.startsWith('e_boots_'));
+
+    // Build a merged Radiation Vial entry for the find menu
+    const vialRecipes = craftableItems.filter(c => c.id.startsWith('radiation_vial_'));
+    const vialMergedId = 'radiation_vial_merged';
+    const vialIsFound = state.foundItems[vialMergedId];
+
+    function renderItem(c) {
+        const isFound = state.foundItems[c.id];
+        const statusHtml = isFound ? `<span class="find-item-status found">Found</span>` : ``;
+        return `
+            <div class="find-item-row" data-id="${c.id}">
+                <span class="find-item-title">${c.name}</span>
+                ${statusHtml}
+            </div>
+        `;
+    }
+
+    function renderFolder(title, items) {
+        if (items.length === 0) return '';
+        const itemsHtml = items.map(renderItem).join('');
+        return `
+            <div class="folder-container">
+                <div class="folder-header">
+                    <span>${title}</span>
+                    <span style="font-size: 0.8em;">▼</span>
+                </div>
+                <div class="folder-content">
+                    ${itemsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    listContainer.innerHTML += renderFolder('Extractors', extractors);
+    listContainer.innerHTML += renderFolder('Energy Boots', boots);
+    listContainer.innerHTML += rootItems.map(renderItem).join('');
+
+    // Add merged Radiation Vial entry
+    if (vialRecipes.length > 0) {
+        const vialStatusHtml = vialIsFound ? `<span class="find-item-status found">Found</span>` : ``;
+        listContainer.innerHTML += `
+            <div class="find-item-row" data-id="${vialMergedId}">
+                <span class="find-item-title">Radiation Vial</span>
+                ${vialStatusHtml}
+            </div>
+        `;
+    }
+
+    // Attach listeners
+    listContainer.querySelectorAll('.folder-header').forEach(header => {
+        header.addEventListener('click', (e) => {
+            const content = e.currentTarget.nextElementSibling;
+            content.classList.toggle('expanded');
+        });
+    });
+
+    listContainer.querySelectorAll('.find-item-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+
+            // Handle merged Radiation Vial entry
+            if (id === 'radiation_vial_merged') {
+                const vialRecipes = craftableItems.filter(c => c.id.startsWith('radiation_vial_'));
+                // Build a virtual merged item with all vial locations
+                const mergedItem = {
+                    id: 'radiation_vial_merged',
+                    name: 'Radiation Vial',
+                    locations: vialRecipes.flatMap(c => c.locations)
+                };
+                if (state.foundItems['radiation_vial_merged']) {
+                    showLocationDisplay(mergedItem);
+                } else {
+                    showFindConfirm(mergedItem);
+                }
+                return;
+            }
+
+            const item = craftableItems.find(c => c.id === id);
+            if (!item) return;
+
+            if (state.foundItems[id]) {
+                showLocationDisplay(item);
+            } else {
+                showFindConfirm(item);
+            }
+        });
+    });
+
+    overlay.style.display = 'flex';
+}
+
+document.getElementById('btn-close-find').addEventListener('click', () => {
+    document.getElementById('find-menu-overlay').style.display = 'none';
+    state.menuOpen = false;
+});
+
+let pendingFindItem = null;
+
+function showFindConfirm(item) {
+    pendingFindItem = item;
+    const confirmOverlay = document.getElementById('find-confirm-overlay');
+    document.getElementById('find-confirm-text').innerText = `Spend one Catalytic Ore to find the ${item.name}?`;
+    confirmOverlay.style.display = 'flex';
+}
+
+document.getElementById('btn-find-cancel').addEventListener('click', () => {
+    document.getElementById('find-confirm-overlay').style.display = 'none';
+    pendingFindItem = null;
+});
+
+document.getElementById('btn-find-yes').addEventListener('click', () => {
+    if (!pendingFindItem) return;
+    if (state.inventory.catalyticOres >= 1) {
+        state.inventory.catalyticOres--;
+        state.foundItems[pendingFindItem.id] = true;
+        updateHUD();
+        document.getElementById('find-confirm-overlay').style.display = 'none';
+
+        // Re-render the menu underneath so it says 'Found'
+        openFindMenu();
+        showLocationDisplay(pendingFindItem);
+    } else {
+        showNotification("Not enough Catalytic Ores!", "error");
+        document.getElementById('find-confirm-overlay').style.display = 'none';
+    }
+});
+
+document.getElementById('btn-vial-cancel').addEventListener('click', () => {
+    document.getElementById('vial-confirm-overlay').style.display = 'none';
+});
+
+document.getElementById('btn-vial-yes').addEventListener('click', () => {
+    if (state.radiation <= 0) {
+        document.getElementById('vial-confirm-overlay').style.display = 'none';
+        showNotification("You are already at 0% radiation", "error");
+        return;
+    }
+    if (state.inventory.radiationVial >= 1) {
+        state.inventory.radiationVial--;
+        state.radiation = Math.max(0, state.radiation - 20);
+        updateHUD();
+        document.getElementById('vial-confirm-overlay').style.display = 'none';
+        showNotification("Consumed one Radiation Vial. Radiation decreased by 20%!", "success");
+    } else {
+        showNotification("No Radiation Vials in inventory!", "error");
+        document.getElementById('vial-confirm-overlay').style.display = 'none';
+    }
+});
+
+function showLocationDisplay(item) {
+    const locOverlay = document.getElementById('location-display-overlay');
+    document.getElementById('location-display-title').innerText = `The ${item.name} is at:`;
+    const grid = document.getElementById('location-display-grid');
+    grid.innerHTML = '';
+
+    item.locations.forEach(sym => {
+        const el = elements.find(e => e.symbol === sym);
+        if (!el) return;
+        const color = getElementColor(el);
+        grid.innerHTML += `
+            <div class="element-card glass-panel" style="width: 120px; height: 160px; border-color: ${color}; box-shadow: 0 0 15px ${color};">
+                <div style="font-size: 0.8rem; opacity: 0.6; margin-bottom: 2px;">${el.atomicNumber}</div>
+                <div style="font-size: 2.2rem; font-weight: bold; margin-bottom: 10px; color: ${color};">${el.symbol}</div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">${el.name}</div>
+            </div>
+        `;
+    });
+
+    locOverlay.style.display = 'flex';
+}
+
+document.getElementById('btn-close-location').addEventListener('click', () => {
+    document.getElementById('location-display-overlay').style.display = 'none';
+});
+
 // --- Init ---
 initShards();
+
+setInterval(() => {
+    if (state.radiation <= 0) return;
+
+    const el = state.currentElement;
+    const isDBlock = el.category === 'transition metal';
+    const isFBlock = el.category === 'lanthanide' || el.category === 'actinide';
+    const period = el.period;
+    const maxRad = getPeriodMaxRadiation(el);
+    const hasSuit = state.upgrades.shieldingSuit;
+
+    let decrease = 0;
+
+    // Hydrogen or Noble Gas Rule
+    if (el.symbol === 'H' || el.group === 18) {
+        decrease = state.radiation; // Instant 0
+    }
+    // Period 2 Rule
+    else if (period === 2) {
+        decrease = 5;
+    }
+    // Over-Max Rule
+    else if (state.radiation > maxRad) {
+        decrease = hasSuit ? 5 : 3;
+        // Don't decrease below maxRad through this rule
+        if (state.radiation - decrease < maxRad) {
+            decrease = state.radiation - maxRad;
+        }
+    }
+    // Nucleus Rule
+    else {
+        const centerIdx = Math.floor(el.gridSize / 2);
+        const isNucleus = (state.localX === centerIdx && state.localY === centerIdx);
+
+        if (isNucleus && !isFBlock) {
+            if (period === 3) decrease = 2;
+            else if (period === 4) decrease = 1.5;
+            else if (period === 5) decrease = 1;
+            else if (period === 6) decrease = 0.75;
+            else if (period === 7) decrease = 0.5;
+
+            if (isDBlock) decrease /= 2;
+            if (hasSuit) decrease *= 3;
+        }
+    }
+
+    if (decrease > 0) {
+        state.radiation -= decrease;
+        if (state.radiation < 0) state.radiation = 0;
+        updateHUD();
+    }
+}, 1000);
 updateHUD();
 renderLoop();
 // Player starts on Hydrogen's nucleus
