@@ -4,7 +4,7 @@ import { craftableItems } from './src/crafting.js'
 import { quests } from './src/quests.js'
 
 // --- Constants & Rules ---
-const DEV_MODE = false; // Set to true to enable playtest cheats (Q and Z)
+const DEV_MODE = true; // Set to true to enable playtest cheats (Q and Z)
 const GLOBAL_STEP = 600;
 const CELL_SIZE = 40;
 const CELL_GAP = 4;
@@ -186,6 +186,91 @@ const state = {
     foundItems: {},
     grabbedCsElectron: false
 };
+
+function saveGame() {
+    try {
+        const saveData = {
+            currentElementSymbol: state.currentElement ? state.currentElement.symbol : 'H',
+            localX: state.localX,
+            localY: state.localY,
+            energy: state.energy,
+            maxEnergy: state.maxEnergy,
+            radiation: state.radiation,
+            totalElectronsEarned: state.totalElectronsEarned,
+            totalCatalyticOres: state.totalCatalyticOres,
+            inventory: state.inventory,
+            upgrades: state.upgrades,
+            bridges: Array.from(state.bridges),
+            visitedElements: Array.from(state.visitedElements),
+            elementDebts: state.elementDebts,
+            elementGiveCount: state.elementGiveCount,
+            banks: state.banks,
+            won: state.won,
+            totalEnergyEarned: state.totalEnergyEarned,
+            top5Placements: state.top5Placements,
+            maxEnergyFromHarvest: state.maxEnergyFromHarvest,
+            quests: state.quests,
+            foundItems: state.foundItems,
+            grabbedCsElectron: state.grabbedCsElectron,
+            shardSpawns: state.shardSpawns
+        };
+        localStorage.setItem('elemental_survival_save', JSON.stringify(saveData));
+    } catch (e) {
+        console.error("Failed to save game to localStorage:", e);
+    }
+}
+
+function loadGame() {
+    try {
+        const rawSave = localStorage.getItem('elemental_survival_save');
+        if (!rawSave) return false;
+
+        const saveData = JSON.parse(rawSave);
+        if (!saveData) return false;
+
+        if (saveData.currentElementSymbol) {
+            const el = elements.find(e => e.symbol === saveData.currentElementSymbol);
+            if (el) state.currentElement = el;
+        }
+
+        state.localX = saveData.localX ?? state.localX;
+        state.localY = saveData.localY ?? state.localY;
+        state.energy = saveData.energy ?? state.energy;
+        state.maxEnergy = saveData.maxEnergy ?? state.maxEnergy;
+        state.radiation = saveData.radiation ?? state.radiation;
+        state.totalElectronsEarned = saveData.totalElectronsEarned ?? state.totalElectronsEarned;
+        state.totalCatalyticOres = saveData.totalCatalyticOres ?? state.totalCatalyticOres;
+
+        if (saveData.inventory) Object.assign(state.inventory, saveData.inventory);
+        if (saveData.upgrades) Object.assign(state.upgrades, saveData.upgrades);
+
+        if (saveData.bridges) state.bridges = new Set(saveData.bridges);
+        if (saveData.visitedElements) state.visitedElements = new Set(saveData.visitedElements);
+
+        if (saveData.elementDebts) Object.assign(state.elementDebts, saveData.elementDebts);
+        if (saveData.elementGiveCount) Object.assign(state.elementGiveCount, saveData.elementGiveCount);
+        if (saveData.banks) Object.assign(state.banks, saveData.banks);
+
+        state.won = saveData.won ?? state.won;
+        state.totalEnergyEarned = saveData.totalEnergyEarned ?? state.totalEnergyEarned;
+        state.top5Placements = saveData.top5Placements ?? state.top5Placements;
+        state.maxEnergyFromHarvest = saveData.maxEnergyFromHarvest ?? state.maxEnergyFromHarvest;
+
+        if (saveData.quests) {
+            state.quests.completed = saveData.quests.completed || [];
+            state.quests.active = saveData.quests.active || [];
+        }
+        if (saveData.foundItems) Object.assign(state.foundItems, saveData.foundItems);
+        state.grabbedCsElectron = saveData.grabbedCsElectron ?? state.grabbedCsElectron;
+
+        if (saveData.shardSpawns) state.shardSpawns = saveData.shardSpawns;
+
+        return true;
+    } catch (e) {
+        console.error("Failed to load game from localStorage:", e);
+        return false;
+    }
+}
 
 // --- Canvas Setup ---
 const appEl = document.getElementById('app');
@@ -1312,6 +1397,7 @@ document.getElementById('btn-collect-energy').addEventListener('click', () => {
     updateHUD();
     // Re-show nucleus prompt
     promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+    saveGame();
 });
 
 // Wire the Harvest Energy button to trigger the minigame
@@ -2039,6 +2125,7 @@ function executeAction() {
         return; // Important: do not call clearAction here since openNucleusMenu handles its own flow
     }
 
+    saveGame();
     clearAction();
 }
 
@@ -2242,6 +2329,7 @@ function completeQuestAtSlot(slotIndex) {
     }
 
     renderQuestUI();
+    saveGame();
 
     // Wait 1 second before starting the fade-out
     setTimeout(() => {
@@ -2501,6 +2589,7 @@ function openCraftingMenu() {
             if (success) {
                 updateHUD();
                 openCraftingMenu(); // Re-render menu
+                saveGame();
             }
         });
 
@@ -2899,6 +2988,7 @@ document.getElementById('btn-find-yes').addEventListener('click', () => {
         // Re-render the menu underneath so it says 'Found'
         openFindMenu();
         showLocationDisplay(pendingFindItem);
+        saveGame();
     } else {
         showNotification("Not enough Catalytic Ores!", "error");
         document.getElementById('find-confirm-overlay').style.display = 'none';
@@ -2921,6 +3011,7 @@ document.getElementById('btn-vial-yes').addEventListener('click', () => {
         updateHUD();
         document.getElementById('vial-confirm-overlay').style.display = 'none';
         showNotification("Consumed one Radiation Vial. Radiation decreased by 20%!", "success");
+        saveGame();
     } else {
         showNotification("No Radiation Vials in inventory!", "error");
         document.getElementById('vial-confirm-overlay').style.display = 'none';
@@ -2953,8 +3044,38 @@ document.getElementById('btn-close-location').addEventListener('click', () => {
     document.getElementById('location-display-overlay').style.display = 'none';
 });
 
+function checkCurrentTile() {
+    const el = state.currentElement;
+    const centerIdx = Math.floor(el.gridSize / 2);
+    const isNucleus = (state.localX === centerIdx && state.localY === centerIdx);
+
+    if (isNucleus) {
+        promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+        return;
+    }
+
+    const shard = getShardAt(el.symbol, state.localX, state.localY);
+    if (shard) {
+        const config = SHARD_CONFIG[shard.type];
+        const shardCaps = shardUpgrades[state.upgrades.shardCapacity];
+        const currentCount = state.inventory.shards[shard.type];
+        const maxCount = shardCaps[shard.type];
+
+        if (state.upgrades[config.extractorKey] && currentCount < maxCount) {
+            const actualCost = getShardHarvestCost(shard.type);
+            promptAction('HARVEST_SHARD', { shard }, `Press [ENTER] to harvest the ${shard.type.toUpperCase()}-Shard (-${actualCost} Energy)`);
+            return;
+        }
+    }
+
+    clearAction();
+}
+
 // --- Init ---
-initShards();
+const saveLoaded = loadGame();
+if (!saveLoaded) {
+    initShards();
+}
 
 setInterval(() => {
     if (state.radiation <= 0) return;
@@ -3007,7 +3128,24 @@ setInterval(() => {
         updateHUD();
     }
 }, 1000);
+
+// Auto-save progress every 10 seconds
+setInterval(saveGame, 10000);
+
 updateHUD();
 renderLoop();
-// Player starts on Hydrogen's nucleus
-promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+
+if (saveLoaded) {
+    checkCurrentTile();
+} else {
+    // Player starts on Hydrogen's nucleus
+    promptAction('NUCLEUS_MENU', {}, "Press [ENTER] to access the Nucleus Hub");
+}
+
+// Reset Progress button logic
+document.getElementById('btn-reset-progress')?.addEventListener('click', () => {
+    if (confirm("Are you sure you want to reset ALL progress? This will delete your save and restart the game!")) {
+        localStorage.removeItem('elemental_survival_save');
+        location.reload();
+    }
+});
