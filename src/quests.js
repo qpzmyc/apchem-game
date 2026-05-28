@@ -18,7 +18,7 @@ export const quests = [
     {
         id: "q_first_electron",
         title: "Electron Grabber",
-        description: "Grab your first electron from a nucleus",
+        description: "Collect enough energy to grab your first electron from a nucleus",
         checkCondition: (state) => {
             return state.totalElectronsEarned >= 1;
         },
@@ -48,7 +48,7 @@ export const quests = [
     {
         id: "noble",
         title: "Noble Explorer",
-        description: "Build a bridge to He and fill the Noble Vault",
+        description: "Build a bridge from H to He and fill the Noble Vault",
         checkCondition: (state) => {
             return state.banks && state.banks['He'] && state.banks['He'].energy >= 1000 && state.banks['He'].electrons >= 2;
         },
@@ -82,7 +82,7 @@ export const quests = [
     {
         id: "ecap_1",
         title: "Energy Capacity I",
-        description: "Craft Energy Capacity I",
+        description: "Craft Energy Capacity I at Li",
         checkCondition: (state) => {
             return state.upgrades.storageCapacity >= 1;
         },
@@ -149,7 +149,7 @@ export const quests = [
     {
         id: "mg_4000",
         title: "Grand Harvest",
-        description: "Generate 4000 energy from a single harvest.",
+        description: "Generate 4000 energy from a single energy harvest.",
         //here, the progress bar should be the the maximum amount of energy the player has earned from a single game thus far. Also make sure to use the base energy gained from the harvest(so the energy capacity wont affect this)
         checkCondition: (state) => {
             return (state.maxEnergyFromHarvest || 0) >= 4000;

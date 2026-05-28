@@ -31,7 +31,7 @@ export const craftableItems = [
     {
         id: "e_booster_3",
         name: "Super Energy Booster",
-        description: "Gain 3x  energy from nucluei",
+        description: "Gain 3x energy from nucluei",
         locations: ["Sn"],
         cost: { energy: 9500, electrons: 4, shards: { s: 2, p: 1, d: 0, f: 0 }, catalyticOres: 1 },
         onCraft: (state) => {

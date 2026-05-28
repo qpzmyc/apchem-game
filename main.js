@@ -258,7 +258,8 @@ function loadGame() {
 
         if (saveData.quests) {
             state.quests.completed = saveData.quests.completed || [];
-            state.quests.active = saveData.quests.active || [];
+            const activeQuests = saveData.quests.active || [];
+            state.quests.active = activeQuests.filter(id => !state.quests.completed.includes(id));
         }
         if (saveData.foundItems) Object.assign(state.foundItems, saveData.foundItems);
         state.grabbedCsElectron = saveData.grabbedCsElectron ?? state.grabbedCsElectron;
@@ -2304,6 +2305,7 @@ function completeQuestAtSlot(slotIndex) {
     const activeId = state.quests.active[slotIndex];
     const questDef = quests.find(q => q.id === activeId);
     if (!questDef) return;
+    if (state.quests.completed.includes(activeId)) return;
 
     // Apply reward immediately, mark as animating (completed-wait)
     questSlotState[slotIndex] = { animating: true, phase: 'completed-wait' };
@@ -2315,7 +2317,9 @@ function completeQuestAtSlot(slotIndex) {
     if (questDef.onComplete) {
         questDef.onComplete(state);
     }
-    state.quests.completed.push(activeId);
+    if (!state.quests.completed.includes(activeId)) {
+        state.quests.completed.push(activeId);
+    }
 
     // Update quest HUD immediately for each individual completed quest in the chain
     const questVal = document.getElementById('quest-value');
