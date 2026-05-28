@@ -4,7 +4,7 @@ import { craftableItems } from './src/crafting.js'
 import { quests } from './src/quests.js'
 
 // --- Constants & Rules ---
-const DEV_MODE = true; // Set to true to enable playtest cheats (Q and Z)
+const DEV_MODE = false; // Set to true to enable playtest cheats (Q and Z)
 const GLOBAL_STEP = 600;
 const CELL_SIZE = 40;
 const CELL_GAP = 4;
